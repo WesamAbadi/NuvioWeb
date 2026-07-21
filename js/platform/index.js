@@ -1,6 +1,7 @@
 import { browserAdapter } from "./adapters/browserAdapter.js";
 import { webosAdapter } from "./adapters/webosAdapter.js";
 import { tizenAdapter } from "./adapters/tizenAdapter.js";
+import "./adapters/browser/webInputAdapter.js";
 
 const ADAPTERS = {
   browser: browserAdapter,

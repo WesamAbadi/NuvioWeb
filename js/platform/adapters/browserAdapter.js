@@ -1,9 +1,17 @@
 import { isBackEvent, normalizeKeyEvent } from "../sharedKeys.js";
+import { initWebInputAdapter } from "./browser/webInputAdapter.js";
+
+// Top-level side effect ensures esbuild never tree-shakes web input adapter module
+try {
+  initWebInputAdapter();
+} catch (_) {}
 
 export const browserAdapter = {
   name: "browser",
 
-  init() {},
+  init() {
+    initWebInputAdapter();
+  },
 
   exitApp() {
     try {
