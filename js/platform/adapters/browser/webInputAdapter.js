@@ -361,7 +361,7 @@ function triggerProfileOptionsDialog(profileCard) {
   return false;
 }
 
-function handlePointerDown(event) {
+function handlePointerDown(event) { 
   unmuteAndUnlockAudio();
   if (event.button !== 0) return;
 
