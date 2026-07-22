@@ -166,29 +166,45 @@ body.platform-browser.player-cursor-hidden * {
 .web-timeline-tooltip {
   position: fixed;
   z-index: 99999;
-  background: rgba(15, 17, 23, 0.95);
-  color: #ffffff;
-  padding: 5px 12px;
+  transform: translateX(-50%);
+  background: rgba(15, 15, 18, 0.92);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 4px 10px;
   border-radius: 6px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: 0.5px;
   pointer-events: none;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
-  transform: translateX(-50%);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  transition: opacity 0.15s ease;
   white-space: nowrap;
-  transition: opacity 0.08s ease;
 }
 
 /* Subtitle & audio menu dialog item hover */
 .platform-browser .player-dialog-item:hover,
 .platform-browser .player-subtitle-item:hover,
-.platform-browser .player-audio-item:hover,
-.platform-browser .player-speed-btn:hover {
-  background-color: rgba(255, 255, 255, 0.2) !important;
+.platform-browser .player-audio-item:hover {
+  background: rgba(255, 255, 255, 0.15) !important;
   color: #ffffff !important;
+}
+
+/* Compact minimal sizing for player aspect toast on Web Desktop Browsers */
+.platform-browser .player-aspect-toast {
+  min-height: 38px !important;
+  padding: 0 20px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.3px !important;
+  border-radius: 20px !important;
+  top: 24px !important;
+  background: rgba(15, 17, 23, 0.9) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
   cursor: pointer !important;
 }
 

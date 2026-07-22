@@ -164,6 +164,39 @@ let isScrubbing = false;
 let playerCursorTimer = null;
 let profileHoldTimer = null;
 let profileHoldTargetCard = null;
+let audioCheckInterval = null;
+let lastWarnedVideoSrc = "";
+
+function monitorAudioDecoding() {
+  if (audioCheckInterval) return;
+
+  audioCheckInterval = setInterval(() => {
+    const playerScreen = getActivePlayerScreen();
+    if (!playerScreen) {
+      lastWarnedVideoSrc = "";
+      return;
+    }
+
+    const video = document.querySelector("#videoPlayer, video");
+    if (!video || video.paused || video.ended || video.muted) {
+      return;
+    }
+
+    if (video.currentTime > 2.5) {
+      const currentSrc = video.currentSrc || video.src || "";
+      if (typeof video.webkitAudioDecodedByteCount === "number") {
+        if (video.webkitAudioDecodedByteCount === 0 && lastWarnedVideoSrc !== currentSrc) {
+          lastWarnedVideoSrc = currentSrc;
+          console.warn("[AUDIO DETECT] Unsupported audio codec! webkitAudioDecodedByteCount === 0 for stream:", currentSrc);
+          
+          if (typeof playerScreen.showAspectToast === "function") {
+            playerScreen.showAspectToast("Audio: AC3 / DTS (Unsupported)", 8000);
+          }
+        }
+      }
+    }
+  }, 2000);
+}
 
 function injectWebBrowserStylesheet() {
   if (typeof document === "undefined") return;
@@ -743,6 +776,8 @@ export function initWebInputAdapter() {
   document.body?.classList?.add("platform-browser");
 
   injectWebBrowserStylesheet();
+
+  monitorAudioDecoding();
 
   window.addEventListener("mousedown", handlePointerDown, true);
   window.addEventListener("mouseup", handlePointerUp, true);

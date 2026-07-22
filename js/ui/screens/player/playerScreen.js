@@ -14870,7 +14870,7 @@ export const PlayerScreen = {
     return false;
   },
 
-  showAspectToast(label) {
+  showAspectToast(label, durationMs = 1400) {
     const toast = this.uiRefs?.aspectToast;
     if (!toast) {
       return;
@@ -14885,7 +14885,7 @@ export const PlayerScreen = {
 
     this.aspectToastTimer = setTimeout(() => {
       toast.classList.add("hidden");
-    }, 1400);
+    }, durationMs);
   },
 
   applyAspectMode({ showToast = false } = {}) {
