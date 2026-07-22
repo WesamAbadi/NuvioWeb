@@ -86,9 +86,9 @@ export function parseProperties(source = "") {
 export function normalizeEnvProperties(properties = {}) {
   const env = {};
   ENV_PROPERTY_KEYS.forEach((key) => {
-    const rawValue = Object.prototype.hasOwnProperty.call(properties, key)
-      ? properties[key]
-      : DEFAULT_ENV_VALUES[key];
+    const fileVal = Object.prototype.hasOwnProperty.call(properties, key) ? properties[key] : undefined;
+    const envVal = process.env[key];
+    const rawValue = (fileVal !== undefined && String(fileVal).trim()) ? fileVal : (envVal !== undefined && String(envVal).trim()) ? envVal : DEFAULT_ENV_VALUES[key];
     const normalizedValue = String(rawValue ?? "");
     const shouldUseDefault =
       (key === "INTRODB_API_URL" || key === "SPONSOR_NAMES") && !normalizedValue.trim();

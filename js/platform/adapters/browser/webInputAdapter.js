@@ -4,7 +4,6 @@ import { Platform } from "../../index.js";
 import { PlayerController } from "../../../core/player/playerController.js";
 import { ProfileSyncService } from "../../../core/profile/profileSyncService.js";
 import { ProfileSelectionScreen } from "../../../core/profile/profileSelectionScreen.js";
-import { AuthQrSignInScreen } from "../../../ui/screens/account/authQrSignInScreen.js";
 import { AuthManager } from "../../../core/auth/authManager.js";
 import {
   setModernSidebarExpanded,
@@ -152,26 +151,6 @@ if (typeof window !== "undefined") {
         );
 
         return hasLocalPin || localEnabled || remoteEnabled;
-      };
-    }
-
-    // Auto-bypass unconfigured QR Auth screen on public web deployments
-    if (AuthQrSignInScreen) {
-      const origStartQr = AuthQrSignInScreen.startQr;
-      AuthQrSignInScreen.startQr = async function () {
-        try {
-          await origStartQr.call(this);
-          const statusText = String(document.querySelector("#qr-status")?.textContent || "").toLowerCase();
-          if (statusText.includes("not configured") || statusText.includes("unavailable")) {
-            if (!this.isLeaving) {
-              this.handleContinueAction();
-            }
-          }
-        } catch (_) {
-          if (!this.isLeaving) {
-            this.handleContinueAction();
-          }
-        }
       };
     }
   } catch (_) {}
