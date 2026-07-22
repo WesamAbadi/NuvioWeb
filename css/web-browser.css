@@ -183,12 +183,27 @@ body.platform-browser.player-cursor-hidden * {
   white-space: nowrap;
 }
 
-/* Subtitle & audio menu dialog item hover */
+/* Subtitle, audio, and source side panel dialog item hover */
 .platform-browser .player-dialog-item:hover,
 .platform-browser .player-subtitle-item:hover,
-.platform-browser .player-audio-item:hover {
+.platform-browser .player-audio-item:hover,
+.platform-browser .player-sources-item:hover,
+.platform-browser [data-sources-zone]:hover,
+.platform-browser [data-subtitle-rail]:hover,
+.platform-browser [data-audio-column]:hover,
+.platform-browser [data-speed-index]:hover {
   background: rgba(255, 255, 255, 0.15) !important;
   color: #ffffff !important;
+  cursor: pointer !important;
+}
+
+.platform-browser .player-sources-panel,
+.platform-browser .player-sources-drawer,
+.platform-browser .player-dialog,
+.platform-browser .player-subtitle-dialog,
+.platform-browser .player-audio-dialog,
+.platform-browser .player-episode-panel {
+  pointer-events: auto !important;
 }
 
 /* Compact minimal sizing for player aspect toast on Web Desktop Browsers */

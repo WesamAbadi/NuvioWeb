@@ -278,6 +278,8 @@ function findFocusableTarget(node) {
     '.home-content-card, .meta-cast-card, .catalog-card, .stream-card, ' +
     '.episode-card, .player-control-btn, .player-control-button, .player-action-btn, ' +
     '.player-progress-shell, .player-header-back-btn, .player-back-btn, ' +
+    '.player-dialog-item, .player-sources-item, [data-sources-zone], [data-subtitle-rail], ' +
+    '[data-audio-column], [data-speed-index], [data-episode-stream-index], ' +
     '.sidebar-item, .settings-item, .profile-card, .nuvio-dialog-btn, .tab-item, [role="button"]'
   );
 
@@ -481,7 +483,13 @@ function handlePointerClick(event) {
     }
 
     const isControlClick = Boolean(
-      rawTarget.closest(".player-control-btn, .player-control-button, .player-action-btn, .player-progress-shell, .focusable, button, [data-player-pointer-action], .player-control-bar")
+      rawTarget.closest(
+        ".player-control-btn, .player-control-button, .player-action-btn, .player-progress-shell, " +
+        ".player-dialog, .player-subtitle-dialog, .player-audio-dialog, .player-sources-panel, .player-sources-drawer, " +
+        ".player-episode-panel, .player-dialog-item, .player-sources-item, [data-sources-zone], [data-subtitle-rail], " +
+        "[data-audio-column], [data-speed-index], [data-episode-action], [data-episode-stream-index], " +
+        ".focusable, button, [data-player-pointer-action], .player-control-bar"
+      )
     );
 
     if (!isControlClick && rawTarget.closest("#player, .player-screen, #videoPlayer, video, .player-video-container")) {
