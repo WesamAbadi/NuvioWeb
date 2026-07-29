@@ -300,7 +300,7 @@ export class NuvioDialog {
     this.destroy();
   }
 
-  destroy() {
+  destroy({ afterExit = null } = {}) {
     if (this._destroyed) return;
     this._destroyed = true;
     window.removeEventListener("keydown", this._keyHandler, { capture: true });
@@ -308,7 +308,10 @@ export class NuvioDialog {
 
     const backdrop = this._backdrop;
     const panel = this._panel;
-    if (!backdrop) return;
+    if (!backdrop) {
+      if (typeof afterExit === "function") afterExit();
+      return;
+    }
 
     // Exit animation
     backdrop.classList.remove("nuvio-dialog-backdrop-enter");
@@ -322,6 +325,7 @@ export class NuvioDialog {
       if (!document.querySelector(".nuvio-dialog-backdrop")) {
         document.body?.classList?.remove("nuvio-modal-open");
       }
+      if (typeof afterExit === "function") afterExit();
     }, 220);
   }
 }

@@ -30,6 +30,7 @@ import {
   isTitleItemWatched,
   renderTitleWatchedBadge
 } from "../../components/watchedTitleBadge.js";
+import { renderLoadingIndicator } from "../../components/loadingIndicator.js";
 
 const POSTER_HOLD_DELAY_MS = 650;
 const SEARCH_RESULTS_PER_ROW_DEFAULT = 18;
@@ -531,7 +532,10 @@ export const SearchScreen = {
           pillIconOnly: Boolean(this.pillIconOnly)
         })}
         <main class="home-main search-content search-loading-shell">
-          <div class="search-loading">${escapeHtml(t("discover_loading", {}, "Loading..."))}</div>
+          <div class="search-loading">
+            ${renderLoadingIndicator()}
+            <span>${escapeHtml(t("discover_loading", {}, "Loading..."))}</span>
+          </div>
         </main>
       </div>
     `;
@@ -982,7 +986,13 @@ export const SearchScreen = {
             dataset: {
               itemId: target.id,
               itemType: target.type || "movie",
-              itemTitle: target.title || "Untitled"
+              itemTitle: target.title || "Untitled",
+              posterSrc: target.poster || "",
+              backdropSrc: target.background || "",
+              addonBaseUrl: target.addonBaseUrl || "",
+              addonId: target.addonId || "",
+              addonName: target.addonName || "",
+              catalogType: target.catalogType || target.type || "movie"
             }
           });
         },

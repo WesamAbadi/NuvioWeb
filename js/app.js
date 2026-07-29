@@ -1,4 +1,3 @@
-import "./runtime/polyfills.js";
 import "./platform/adapters/browser/webInputAdapter.js";
 import "./core/diagnostics/consoleDebugBuffer.js";
 import { detailWatchedEnrichmentService } from "./data/repository/detailWatchedEnrichmentService.js";
@@ -87,6 +86,13 @@ function isLowEndDevice() {
   return lowCpu || lowMem;
 }
 
+function getChromiumMajorVersion() {
+  const userAgent = String(globalThis.navigator?.userAgent || "");
+  const match = userAgent.match(/(?:chrome|chromium)\/(\d{2,3})/i);
+  const version = Number(match?.[1] || 0);
+  return Number.isFinite(version) ? version : 0;
+}
+
 function applyPerformanceMode() {
   const constrained = Platform.isWebOS() || Platform.isTizen() || isLowEndDevice();
   const webOsMajorVersion = Platform.isWebOS() ? Number(Platform.getWebOsMajorVersion() || 0) : 0;
@@ -94,8 +100,17 @@ function applyPerformanceMode() {
   const legacyWebOs38 = Platform.isWebOS() && webOsMajorVersion > 0 && webOsMajorVersion <= 3;
   const legacyTizen = Platform.isTizen();
   const rootClasses = document.documentElement.classList;
+  const modernWebOs = Platform.isWebOS() && getChromiumMajorVersion() >= 120;
+  const modernSidebarBlurCapable =
+    !rootClasses.contains("no-backdrop-filter") &&
+    ((!constrained && !legacyTizen) || modernWebOs);
   document.documentElement.classList.toggle("performance-constrained", constrained);
   document.body.classList.toggle("performance-constrained", constrained);
+  document.documentElement.classList.toggle(
+    "modern-sidebar-blur-capable",
+    modernSidebarBlurCapable
+  );
+  document.body.classList.toggle("modern-sidebar-blur-capable", modernSidebarBlurCapable);
   document.documentElement.classList.toggle("legacy-webos", legacyWebOs);
   document.body.classList.toggle("legacy-webos", legacyWebOs);
   document.documentElement.classList.toggle("legacy-webos38", legacyWebOs38);

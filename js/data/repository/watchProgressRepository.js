@@ -248,9 +248,14 @@ function matchesResumeTarget(item = {}, { videoId = null, season = null, episode
   if (wantedVideoId && String(item?.videoId || "").trim() === wantedVideoId) {
     return true;
   }
-  const wantedSeason = Number(season || 0);
+  const wantedSeason = Number(season);
   const wantedEpisode = Number(episode || 0);
-  if (wantedSeason > 0 && wantedEpisode > 0) {
+  if (
+    season != null &&
+    Number.isFinite(wantedSeason) &&
+    wantedSeason >= 0 &&
+    wantedEpisode > 0
+  ) {
     return (
       Number(item?.season || item?.seasonNumber || 0) === wantedSeason &&
       Number(item?.episode || item?.episodeNumber || 0) === wantedEpisode
@@ -266,8 +271,13 @@ function selectBestResumeProgress(items = [], contentIds = [], target = {}) {
   if (!candidates.length) {
     return null;
   }
-  const hasExplicitTarget = Boolean(String(target?.videoId || "").trim())
-    || (Number(target?.season || 0) > 0 && Number(target?.episode || 0) > 0);
+  const targetSeason = Number(target?.season);
+  const hasExplicitTarget =
+    Boolean(String(target?.videoId || "").trim()) ||
+    (target?.season != null &&
+      Number.isFinite(targetSeason) &&
+      targetSeason >= 0 &&
+      Number(target?.episode || 0) > 0);
   const targeted = candidates.filter((item) => matchesResumeTarget(item, target));
   const pool = hasExplicitTarget ? targeted : candidates;
   if (!pool.length) {
@@ -331,7 +341,13 @@ function toProgressItemFromTraktHistory(historyItem) {
     // Keep it out of Continue Watching while still letting it seed Next Up.
     progressPercent: 100,
     profileId: activeProfileId(),
-    season: isEpisode ? Number(historyItem.seasonNumber || 0) || null : null,
+    season:
+      isEpisode &&
+      historyItem.seasonNumber != null &&
+      Number.isFinite(Number(historyItem.seasonNumber)) &&
+      Number(historyItem.seasonNumber) >= 0
+        ? Number(historyItem.seasonNumber)
+        : null,
     episode: isEpisode ? Number(historyItem.episodeNumber || 0) || null : null,
     seasonNumber: isEpisode ? historyItem.seasonNumber : undefined,
     episodeNumber: isEpisode ? historyItem.episodeNumber : undefined,
@@ -364,7 +380,13 @@ function toProgressItemFromPlayback(playbackItem) {
     durationMs: 0,
     progressPercent: playbackItem.progressPercent,
     profileId: activeProfileId(),
-    season: isEpisode ? Number(playbackItem.seasonNumber || 0) || null : null,
+    season:
+      isEpisode &&
+      playbackItem.seasonNumber != null &&
+      Number.isFinite(Number(playbackItem.seasonNumber)) &&
+      Number(playbackItem.seasonNumber) >= 0
+        ? Number(playbackItem.seasonNumber)
+        : null,
     episode: isEpisode ? Number(playbackItem.episodeNumber || 0) || null : null,
     seasonNumber: playbackItem.seasonNumber,
     episodeNumber: playbackItem.episodeNumber,

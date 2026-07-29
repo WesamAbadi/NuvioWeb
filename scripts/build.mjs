@@ -2,6 +2,7 @@ import { cp, mkdir, readFile, rm, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import coreJsCompat from "core-js-compat";
 import postcssGlobalData from "@csstools/postcss-global-data";
 import postcss from "postcss";
 import cssnano from "cssnano";
@@ -13,7 +14,6 @@ import { writeRuntimeEnvScriptFile } from "./envProperties.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const distDir = path.join(rootDir, "dist");
-const bundleFileName = "app.bundle.js";
 const requireConfiguredRuntimeEnv = /^(1|true|yes|on)$/i.test(
   String(process.env.NUVIO_REQUIRE_LOCAL_PROPERTIES || "")
 );
@@ -425,23 +425,53 @@ async function copyOptionalRootFile(fileName, { fallback = null, defaultContents
   return "generated-default";
 }
 
+async function buildCoreJsBundle() {
+  console.log("building core-js bundle...");
+  const { list: requiredModules } = coreJsCompat({
+    modules: ["core-js/stable"],
+    targets: { chrome: String(compatibilityPolicy.chromiumVersion) }
+  });
+  if (requiredModules.length === 0) {
+    throw new Error("Core-js compatibility query returned no required modules.");
+  }
+  await build({
+    stdin: {
+      contents: requiredModules
+        .map((moduleName) => `import "core-js/modules/${moduleName}.js";`)
+        .join("\n"),
+      resolveDir: rootDir,
+      sourcefile: "core-js-entry.js"
+    },
+    outfile: path.join(distDir, "core-js.bundle.js"),
+    bundle: true,
+    format: "iife",
+    minify: !debugBundle,
+    target: [`chrome${compatibilityPolicy.chromiumVersion}`],
+    legalComments: "none"
+  });
+}
+
 async function buildBundle() {
   const { version } = await readAppMetadata();
 
   console.log("starting bundle build...");
-  await build({
+  const result = await build({
     entryPoints: [path.join(rootDir, "js/app.js")],
-    outfile: path.join(distDir, bundleFileName),
+    outfile: path.join(distDir, "app.bundle.js"),
     bundle: true,
     minify: !debugBundle,
     format: "iife",
     sourcemap: debugBundle,
     target: [`chrome${compatibilityPolicy.chromiumVersion}`],
+    metafile: true,
     define: {
       "process.env.NODE_ENV": '"production"',
       __NUVIO_APP_VERSION__: JSON.stringify(version)
     }
   });
+  if (Object.keys(result.metafile.inputs).some((input) => input.includes("node_modules/core-js/"))) {
+    throw new Error("Application bundle must not contain core-js modules.");
+  }
   console.log("bundle build complete");
 }
 async function runBuild() {
@@ -462,6 +492,7 @@ async function runBuild() {
       cp(path.join(rootDir, "boot-guard.js"), path.join(distDir, "boot-guard.js")),
       cp(path.join(rootDir, "docs", "youtube-proxy.html"), path.join(distDir, "youtube-proxy.html"))
     ]);
+    await buildCoreJsBundle();
     await Promise.all([
       cp(
         path.join(rootDir, "node_modules", "hls.js", "dist", "hls.min.js"),

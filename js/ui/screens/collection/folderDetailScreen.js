@@ -28,6 +28,7 @@ import {
   isTitleItemWatched,
   renderTitleWatchedBadge
 } from "../../components/watchedTitleBadge.js";
+import { renderLoadingIndicator } from "../../components/loadingIndicator.js";
 
 const TMDB_API_URL = "https://api.themoviedb.org/3";
 const TMDB_POSTER_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w342";
@@ -1139,7 +1140,14 @@ export const FolderDetailScreen = {
           ` : ""}
         </article>
       `).join("");
-      const loading = tab.loading ? '<div class="seeall-loading folder-row-loading">Loading...</div>' : '';
+      const loading = tab.loading
+        ? `
+          <div class="seeall-loading folder-row-loading">
+            ${renderLoadingIndicator()}
+            <span>Loading...</span>
+          </div>
+        `
+        : "";
       const error = tab.error && !tab.loading ? `<div class="seeall-empty">${escapeHtml(tab.error)}</div>` : '';
       return `
         <section class="folder-detail-row">
@@ -1174,7 +1182,12 @@ export const FolderDetailScreen = {
           <section class="seeall-grid">
             ${cards}
           </section>
-          ${selectedTab?.loading ? '<div class="seeall-loading">Loading...</div>' : ''}
+          ${selectedTab?.loading ? `
+            <div class="seeall-loading">
+              ${renderLoadingIndicator()}
+              <span>Loading...</span>
+            </div>
+          ` : ""}
         </div>
       `
       : `

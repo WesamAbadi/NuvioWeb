@@ -7,6 +7,10 @@ import {
   getAudioTrackLabelPrefix,
   mapAudioTrackNativeIndexes
 } from "../../../core/player/audioTrackCodecMetadata.js";
+import {
+  canReleasePlayingNativeStartupAudioGate,
+  selectStartupAudioFallbackOption
+} from "../../../core/player/startupAudioGatePolicy.js";
 import { resolveSubtitleStyleControlAvailability } from "../../../core/player/subtitlePresentationCapabilities.js";
 import {
   ensureWebOsImageProxyReady,
@@ -33,11 +37,13 @@ import { StreamBadgeSettingsStore } from "../../../data/local/streamBadgeSetting
 import { TorrentSettingsStore } from "../../../data/local/torrentSettingsStore.js";
 import { WebOsAudioCompatibilityStore } from "../../../data/local/webOsAudioCompatibilityStore.js";
 import { matchStreamBadges } from "../../../core/streams/streamBadgeRules.js";
+import { hasReleaseToken } from "../../../core/streams/releaseToken.js";
 import { selectAutoPlayStream } from "../../../core/streams/streamAutoPlaySelector.js";
 import { metaRepository } from "../../../data/repository/metaRepository.js";
 import { I18n } from "../../../i18n/index.js";
 import { Environment } from "../../../platform/environment.js";
 import { Router } from "../../navigation/router.js";
+import { renderLoadingIndicator } from "../../components/loadingIndicator.js";
 import { DirectDebridResolver } from "../../../core/debrid/directDebridResolver.js";
 import { TraktScrobbleService } from "../../../data/repository/traktScrobbleService.js";
 import { WebOsEngineFsResolver } from "../../../core/p2p/webosEngineFsResolver.js";
@@ -45,6 +51,7 @@ import { TizenStreamingServerResolver } from "../../../core/p2p/tizenStreamingSe
 import { TizenEngineFsService } from "../../../platform/tizen/tizenEngineFsService.js";
 import { requestWebOsCompanionService, subscribeWebOsCompanionService } from "../../../platform/webos/webosCompanionService.js";
 import { StreamPreferencesStore } from "../../../data/local/streamPreferencesStore.js";
+import { buildStreamResumeIdentity } from "../../../core/streams/streamResumeIdentity.js";
 import { TrackPreferencesStore } from "../../../data/local/trackPreferencesStore.js";
 import {
   shouldEnterStillWatchingPrompt,
@@ -57,6 +64,13 @@ import {
   parseVttCueLayout
 } from "../../../core/player/subtitleCueLayout.js";
 import {
+  SUBTITLE_VERTICAL_OFFSET_DEFAULT,
+  SUBTITLE_VERTICAL_OFFSET_PLAYER_STEP,
+  formatSubtitleVerticalOffset,
+  normalizeSubtitleVerticalOffset,
+  splitSubtitleVerticalOffset
+} from "../../../core/player/subtitleVerticalOffset.js";
+import {
   BitmapSubtitleDecoder,
   supportsBitmapSubtitleDecoding,
   warmBitmapSubtitleDecoder
@@ -66,7 +80,7 @@ const CLOCK_FORMATTER_CACHE = new Map();
 const LANGUAGE_DISPLAY_NAME_CACHE = new Map();
 const ENGINEFS_NAVIGATION_CLEANUP_GRACE_MS = 1500;
 const STARTUP_PLAYBACK_ADVANCE_EPSILON_SECONDS = 0.001;
-const BUFFERING_SPINNER_STALL_MS = 500;
+const BUFFERING_SPINNER_STALL_MS = 0;
 const LOADING_LOGO_FILL_TARGET_LERP = 0.22;
 const LOADING_LOGO_FILL_IDLE_STEP = 0.006;
 const LOADING_LOGO_FILL_FRAME_MS = 80;
@@ -390,7 +404,7 @@ const SUBTITLE_DELAY_MIN_MS = -60000;
 const SUBTITLE_DELAY_MAX_MS = 60000;
 const SUBTITLE_DELAY_STEP_MS = 100;
 const SUBTITLE_FONT_STEP = 10;
-const SUBTITLE_VERTICAL_OFFSET_STEP = 1;
+const SUBTITLE_VERTICAL_OFFSET_STEP = SUBTITLE_VERTICAL_OFFSET_PLAYER_STEP;
 const AUDIO_AMPLIFICATION_MIN_DB = 0;
 const AUDIO_AMPLIFICATION_MAX_DB = 10;
 const PLAYER_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -1522,15 +1536,15 @@ function formatSubtitleDelay(delayMs = 0) {
   return `${seconds >= 0 ? "+" : ""}${seconds.toFixed(3)}s`;
 }
 
-function normalizeSubtitleFontSize(value = 100) {
-  const parsed = Number(value || 100);
+function normalizeSubtitleFontSize(value = 120) {
+  const parsed = Number(value ?? 120);
   if (!Number.isFinite(parsed)) {
-    return 100;
+    return 120;
   }
   return clamp(Math.round(parsed), 50, 200);
 }
 
-function formatHtmlSubtitleFontSize(value = 100) {
+function formatHtmlSubtitleFontSize(value = 120) {
   const scale = normalizeSubtitleFontSize(value) / 100;
   const documentRef = globalThis?.document;
   const viewportHeight = Number(
@@ -1543,30 +1557,6 @@ function formatHtmlSubtitleFontSize(value = 100) {
     ? clamp(viewportHeight * 0.044, 30, 82)
     : 48;
   return `${Math.round(basePx * scale)}px`;
-}
-
-function normalizeSubtitleVerticalOffset(value = 0) {
-  const parsed = Number(value || 0);
-  if (!Number.isFinite(parsed)) {
-    return 0;
-  }
-  const normalized = clamp(Math.round(parsed), -12, 12);
-  return Object.is(normalized, -0) ? 0 : normalized;
-}
-
-function splitSubtitleVerticalOffset(value = 0) {
-  const normalized = normalizeSubtitleVerticalOffset(value);
-  const lineOffset = normalized < 0 ? Math.ceil(normalized) : Math.floor(normalized);
-  const residualOffset = Number((normalized - lineOffset).toFixed(2));
-  return {
-    value: normalized,
-    lineOffset,
-    residualOffset: Object.is(residualOffset, -0) ? 0 : residualOffset
-  };
-}
-
-function formatSubtitleVerticalOffset(value = 0) {
-  return String(normalizeSubtitleVerticalOffset(value));
 }
 
 function normalizeSubtitleLanguageKey(value) {
@@ -2107,14 +2097,7 @@ export const PlayerScreen = {
     // (this skips trailers and synthetic single-url playback).
     if (Array.isArray(params.streamCandidates) && params.streamCandidates.length) {
       const playingStreamCandidate = this.streamCandidates[this.currentStreamIndex] || null;
-      const prefContentId = String(params?.itemId || "").trim();
-      const prefVideoId = String(params?.videoId || params?.itemId || "").trim();
-      if (playingStreamCandidate?.id && prefContentId) {
-        StreamPreferencesStore.set(prefContentId, prefVideoId, playingStreamCandidate.id, {
-          bingeGroup: playingStreamCandidate?.behaviorHints?.bingeGroup ||
-            playingStreamCandidate?.raw?.behaviorHints?.bingeGroup || ""
-        });
-      }
+      this.rememberSelectedStreamPreference(playingStreamCandidate);
     }
     this.activePlaybackSourceContext = this.getPlaybackSourceContext(
       preferredStreamCandidate || initialStreamCandidate || this.streamCandidates[this.currentStreamIndex] || null
@@ -2191,6 +2174,7 @@ export const PlayerScreen = {
     this.sourceFilter = "all";
     this.sourcesFocus = { zone: "filter", index: 0 };
     this.sourceLoadToken = 0;
+    this.completedSourceRequestKey = "";
     this.streamCandidatesByVideoId = new Map();
     this.streamCandidatesLoadPromises = new Map();
 
@@ -2539,8 +2523,23 @@ export const PlayerScreen = {
       episodeTitle: this.params.episodeTitle || this.params.playerSubtitle || null,
       requestHeaders,
       mediaSourceType,
-      streamIdentity: streamCandidate ? streamMergeKey(streamCandidate) || null : null
+      streamIdentity: streamCandidate
+        ? buildStreamResumeIdentity(streamCandidate) || streamMergeKey(streamCandidate) || null
+        : null
     };
+  },
+
+  rememberSelectedStreamPreference(streamCandidate) {
+    const prefContentId = String(this.params?.itemId || "").trim();
+    const prefVideoId = String(this.params?.videoId || this.params?.itemId || "").trim();
+    if (!streamCandidate?.id || !prefContentId) {
+      return;
+    }
+    StreamPreferencesStore.set(prefContentId, prefVideoId, streamCandidate.id, {
+      bingeGroup: streamCandidate?.behaviorHints?.bingeGroup ||
+        streamCandidate?.raw?.behaviorHints?.bingeGroup || "",
+      resumeIdentity: buildStreamResumeIdentity(streamCandidate)
+    });
   },
 
   buildSubtitleLookupContext() {
@@ -2571,6 +2570,10 @@ export const PlayerScreen = {
       type,
       id,
       videoId,
+      season: this.params?.season ?? null,
+      episode: this.params?.episode ?? null,
+      title: this.params?.playerTitle || this.params?.itemTitle || null,
+      year: this.params?.playerReleaseYear || this.params?.year || null,
       videoHash: behaviorHints.videoHash || rawStream.videoHash || this.params?.videoHash || null,
       videoSize: behaviorHints.videoSize || rawStream.videoSize || this.params?.videoSize || null,
       filename: behaviorHints.filename || rawStream.filename || this.params?.filename || null
@@ -2582,7 +2585,8 @@ export const PlayerScreen = {
     const rawImdbId = String(this.params?.imdbId || this.params?.imdb_id || "").trim();
     const rawItemId = String(this.params?.itemId || "").trim();
     const rawVideoId = String(this.params?.videoId || "").trim();
-    const season = Number(this.params?.season || 0);
+    const seasonRaw = this.params?.season;
+    const season = Number(seasonRaw);
     const episode = Number(this.params?.episode || 0);
     const imdbId = [
       normalizePlayableImdbId(rawImdbId),
@@ -2604,7 +2608,8 @@ export const PlayerScreen = {
       imdbId,
       tmdbId,
       traktId,
-      season: Number.isFinite(season) && season > 0 ? season : null,
+      season:
+        seasonRaw != null && Number.isFinite(season) && season >= 0 ? season : null,
       episode: Number.isFinite(episode) && episode > 0 ? episode : null
     };
   },
@@ -2989,16 +2994,20 @@ export const PlayerScreen = {
     }
 
     const rootStyle = getComputedStyle(document.documentElement);
-    const accent = rootStyle.getPropertyValue("--secondary-color").trim() || "#f5f5f5";
-    const onAccent = rootStyle.getPropertyValue("--on-secondary").trim() || "#111111";
+    const focusBackground =
+      rootStyle.getPropertyValue("--player-focus-background").trim() || "#303030";
+    const focusContent =
+      rootStyle.getPropertyValue("--player-text-primary").trim() || "#ffffff";
+    const focusRing = rootStyle.getPropertyValue("--player-focus-ring").trim() || "#ffffff";
     const isFocused = document.activeElement === target || target.classList.contains("focused");
-    const background = isFocused ? accent : "rgba(30, 30, 30, 0.85)";
-    const color = isFocused ? onAccent : "#fff";
+    const background = isFocused ? focusBackground : "rgba(30, 30, 30, 0.85)";
+    const color = isFocused ? focusContent : "#fff";
+    const boxShadow = isFocused ? `0 0 0 4px ${focusRing}` : "none";
 
     target.style.setProperty("background", background, "important");
     target.style.setProperty("background-color", background, "important");
     target.style.setProperty("color", color, "important");
-    target.style.setProperty("box-shadow", "none", "important");
+    target.style.setProperty("box-shadow", boxShadow, "important");
 
     const icon = target.querySelector(".player-skip-intro-icon");
     const label = target.querySelector(".player-skip-intro-label");
@@ -4574,7 +4583,7 @@ export const PlayerScreen = {
         </div>
 
         <div id="playerBufferingSpinner" class="player-loading-spinner hidden" aria-hidden="true">
-          <div class="player-loading-spinner-ring"></div>
+          ${renderLoadingIndicator({ className: "player-loading-spinner-ring" })}
           <div class="player-loading-status player-loading-spinner-status hidden"></div>
         </div>
 
@@ -5557,9 +5566,16 @@ export const PlayerScreen = {
       }
     }
 
-    const season = Number(this.params?.season || 0);
+    const seasonRaw = this.params?.season;
+    const season = Number(seasonRaw);
     const episode = Number(this.params?.episode || 0);
-    if (Number.isFinite(season) && season > 0 && Number.isFinite(episode) && episode > 0) {
+    if (
+      seasonRaw != null &&
+      Number.isFinite(season) &&
+      season >= 0 &&
+      Number.isFinite(episode) &&
+      episode > 0
+    ) {
       return entries.find((entry) => (
         Number(entry?.season || 0) === season
         && Number(entry?.episode || 0) === episode
@@ -5588,7 +5604,12 @@ export const PlayerScreen = {
     );
     const season = Number(this.params?.season ?? episodeEntry?.season ?? metaEpisodeEntry?.season ?? 0);
     const episode = Number(this.params?.episode ?? episodeEntry?.episode ?? metaEpisodeEntry?.episode ?? 0);
-    const hasEpisodeContext = Number.isFinite(season) && season > 0 && Number.isFinite(episode) && episode > 0;
+    const hasEpisodeContext =
+      this.params?.season != null &&
+      Number.isFinite(season) &&
+      season >= 0 &&
+      Number.isFinite(episode) &&
+      episode > 0;
     const episodeCode = hasEpisodeContext ? `S${season}E${episode}` : "";
     const episodeTitle = cleanDisplayText(
       this.getDisplayEpisodeTitle()
@@ -5943,7 +5964,12 @@ export const PlayerScreen = {
     const title = String(this.params?.playerTitle || this.params?.itemTitle || this.params?.itemId || "Untitled").trim() || "Untitled";
     const season = this.params?.season == null ? null : Number(this.params.season);
     const episode = this.params?.episode == null ? null : Number(this.params.episode);
-    const hasEpisodeContext = Number.isFinite(season) && season > 0 && Number.isFinite(episode) && episode > 0;
+    const hasEpisodeContext =
+      this.params?.season != null &&
+      Number.isFinite(season) &&
+      season >= 0 &&
+      Number.isFinite(episode) &&
+      episode > 0;
     const episodeCode = hasEpisodeContext ? `S${season}E${episode}` : "";
     const episodeTitle = this.getDisplayEpisodeTitle();
     const subtitle = hasEpisodeContext
@@ -5979,22 +6005,26 @@ export const PlayerScreen = {
     }
 
     if (!nextEpisode && this.params?.videoId && this.episodes.length) {
-      const currentIndex = this.episodes.findIndex((episode) => String(episode?.id || "") === String(this.params?.videoId || ""));
-      if (currentIndex >= 0) {
-        nextEpisode = this.episodes[currentIndex + 1] || null;
-      }
+      const currentEpisode = this.episodes.find(
+        (episode) => String(episode?.id || "") === String(this.params?.videoId || "")
+      );
+      nextEpisode = this.getNextEpisodeInSequence(currentEpisode);
     }
 
     if (!nextEpisode && this.episodes.length) {
-      const currentSeason = Number(this.params?.season || 0);
+      const currentSeasonRaw = this.params?.season;
+      const currentSeason = Number(currentSeasonRaw);
       const currentEpisode = Number(this.params?.episode || 0);
-      if (currentSeason > 0 && currentEpisode > 0) {
-        const currentIndex = this.episodes.findIndex((episode) => (
+      if (
+        currentSeasonRaw != null &&
+        Number.isFinite(currentSeason) &&
+        currentSeason >= 0 &&
+        currentEpisode > 0
+      ) {
+        const currentEntry = this.episodes.find((episode) => (
           Number(episode?.season || 0) === currentSeason && Number(episode?.episode || 0) === currentEpisode
         ));
-        if (currentIndex >= 0) {
-          nextEpisode = this.episodes[currentIndex + 1] || null;
-        }
+        nextEpisode = this.getNextEpisodeInSequence(currentEntry);
       }
     }
 
@@ -6020,6 +6050,25 @@ export const PlayerScreen = {
     };
   },
 
+  getNextEpisodeInSequence(currentEpisode = null) {
+    if (!currentEpisode || !Array.isArray(this.episodes) || !this.episodes.length) {
+      return null;
+    }
+    const currentSeason = Number(currentEpisode?.season);
+    const sequence = this.episodes.filter((episode) =>
+      currentSeason === 0
+        ? Number(episode?.season) === 0
+        : Number(episode?.season) > 0
+    );
+    const currentIndex = sequence.findIndex(
+      (episode) =>
+        String(episode?.id || "") === String(currentEpisode?.id || "") ||
+        (Number(episode?.season || 0) === currentSeason &&
+          Number(episode?.episode || 0) === Number(currentEpisode?.episode || 0))
+    );
+    return currentIndex >= 0 ? sequence[currentIndex + 1] || null : null;
+  },
+
   resolveCurrentEpisodeEntry() {
     if (!Array.isArray(this.episodes) || !this.episodes.length) {
       return null;
@@ -6032,9 +6081,15 @@ export const PlayerScreen = {
       }
     }
 
-    const currentSeason = Number(this.params?.season || 0);
+    const currentSeasonRaw = this.params?.season;
+    const currentSeason = Number(currentSeasonRaw);
     const currentEpisode = Number(this.params?.episode || 0);
-    if (currentSeason <= 0 || currentEpisode <= 0) {
+    if (
+      currentSeasonRaw == null ||
+      !Number.isFinite(currentSeason) ||
+      currentSeason < 0 ||
+      currentEpisode <= 0
+    ) {
       return null;
     }
     return this.episodes.find((episode) => (
@@ -6120,9 +6175,9 @@ export const PlayerScreen = {
   buildDetailRouteParamsFromPlayer() {
     const itemType = normalizeItemType(this.params?.itemType || "movie");
     const currentEpisode = itemType === "series" ? this.resolveCurrentEpisodeEntry() : null;
-    const preferredSeason = itemType === "series"
-      ? Number(this.params?.season ?? currentEpisode?.season ?? 0)
-      : 0;
+    const preferredSeasonRaw =
+      itemType === "series" ? this.params?.season ?? currentEpisode?.season : null;
+    const preferredSeason = Number(preferredSeasonRaw);
     return {
       itemId: this.params?.itemId || null,
       itemType,
@@ -6130,7 +6185,12 @@ export const PlayerScreen = {
       imdbId: this.params?.imdbId || null,
       tmdbId: this.params?.tmdbId || this.params?.tmdb_id || null,
       traktId: this.params?.traktId || this.params?.trakt_id || null,
-      preferredSeason: Number.isFinite(preferredSeason) && preferredSeason > 0 ? preferredSeason : null
+      preferredSeason:
+        preferredSeasonRaw != null &&
+        Number.isFinite(preferredSeason) &&
+        preferredSeason >= 0
+          ? preferredSeason
+          : null
     };
   },
 
@@ -8380,6 +8440,11 @@ export const PlayerScreen = {
     this.startupAudioGateActive = false;
     this.startupAudioGateAllowsNativePlayback = false;
     this.startupAudioGateDeadline = 0;
+    // Once playback leaves the startup gate, later webOS track-list churn must
+    // not reopen automatic language matching. A Luna selectTrack request during
+    // normal playback can interrupt the native decoder on some LG TVs.
+    this.startupAudioFallbackApplied = false;
+    this.startupAudioTrackSetSignature = "";
     PlayerController.setStartupAudioGate?.(false, { resume });
   },
 
@@ -8470,6 +8535,18 @@ export const PlayerScreen = {
       : Number(PlayerController.video?.readyState || 0);
     const gateDeadlineExpired = Number(this.startupAudioGateDeadline || 0) > 0
       && Date.now() >= Number(this.startupAudioGateDeadline || 0);
+    if (canReleasePlayingNativeStartupAudioGate({
+      allowNativePlayback: this.startupAudioGateAllowsNativePlayback,
+      hasPresentedPlaybackFrame: this.hasPresentedPlaybackFrame,
+      pendingAudioSelection: Boolean(this.pendingWebOsAudioSelection),
+      readyState
+    })) {
+      if (!this.startupAudioPreferenceApplied) {
+        this.applyStartupAudioFallback();
+      }
+      return Boolean(this.startupAudioPreferenceApplied)
+        && !this.pendingWebOsAudioSelection;
+    }
     if (gateDeadlineExpired && !this.pendingWebOsAudioSelection) {
       if (!this.startupAudioPreferenceApplied) {
         this.applyStartupAudioFallback();
@@ -9682,6 +9759,7 @@ export const PlayerScreen = {
         entry.id === streamCandidate.id ? { ...entry, ...streamCandidate } : entry
       ));
     }
+    this.rememberSelectedStreamPreference(streamCandidate);
     await this.playStreamByUrl(targetUrl, {
       ...options,
       mountToken,
@@ -10178,13 +10256,14 @@ export const PlayerScreen = {
     const audioTrackSetSignature = this.getStartupAudioTrackSetSignature();
     if (
       Environment.isWebOS()
+      && this.startupAudioGateActive
       && this.startupAudioFallbackApplied
       && this.startupAudioTrackSetSignature
       && audioTrackSetSignature !== this.startupAudioTrackSetSignature
     ) {
       // webOS may expose the default track before the complete multi-audio
-      // list. Re-open startup matching when that list grows or gains metadata;
-      // otherwise the provisional first-track fallback becomes permanent.
+      // list. Re-open matching only while startup still owns playback; after
+      // the gate is released, the bounded fallback remains authoritative.
       if (this.pendingWebOsAudioSelection?.automaticFallback) {
         PlayerController.cancelWebOsAudioTrackSelection?.();
         this.pendingWebOsAudioSelection = null;
@@ -10360,12 +10439,30 @@ export const PlayerScreen = {
         && !this.manifestLoading
         && !shouldRetryEmbeddedTracks
         && (now - Number(this.trackDiscoveryStartedAt || 0)) >= 1200;
-      const doneByTimeout = now >= this.trackDiscoveryDeadline;
+      const trackDiscoveryElapsedMs = now - Number(this.trackDiscoveryStartedAt || 0);
+      const webOsStartupPreferenceUnresolved = Boolean(
+        Environment.isWebOS()
+        && this.startupAudioGateActive
+        && !this.startupAudioPreferenceApplied
+      );
+      const webOsStartupPreferencePending = webOsStartupPreferenceUnresolved
+        && trackDiscoveryElapsedMs < STARTUP_AUDIO_PREFERENCE_RETRY_WINDOW_MS;
+      const webOsStartupPreferenceWaitExpired = webOsStartupPreferenceUnresolved
+        && trackDiscoveryElapsedMs >= STARTUP_AUDIO_PREFERENCE_RETRY_WINDOW_MS;
+      const doneByTimeout = now >= this.trackDiscoveryDeadline
+        || webOsStartupPreferenceWaitExpired;
       this.refreshTrackDialogs();
 
-      if (doneByData || doneByIdle || doneByTimeout) {
+      // webOS can expose only its default audio track first. Keep discovery
+      // alive for the bounded startup preference window so a later complete
+      // multi-audio list can be selected before playback is released. This
+      // avoids the unsafe mid-playback selectTrack retry blocked by the gate.
+      if ((!webOsStartupPreferencePending && (doneByData || doneByIdle)) || doneByTimeout) {
         this.trackDiscoveryInProgress = false;
         this.clearTrackDiscoveryTimer();
+        if (webOsStartupPreferenceWaitExpired) {
+          this.clearStartupAudioPreferenceRetry();
+        }
         this.refreshTrackDialogs();
         return;
       }
@@ -11281,7 +11378,7 @@ export const PlayerScreen = {
     const viewportHeight = Math.max(1, Number(viewport?.height || window.innerHeight || document.documentElement?.clientHeight || 1080));
     const style = this.subtitleStyleSettings || {};
     const sizeScale = normalizeSubtitleFontSize(style.fontSize) / 100;
-    const verticalOffsetPx = normalizeSubtitleVerticalOffset(style.verticalOffset) * -0.02 * viewportHeight;
+    const verticalOffsetPx = splitSubtitleVerticalOffset(style.verticalOffset).value * -0.02 * viewportHeight;
     const mode = this.aspectModes[this.aspectModeIndex] || this.aspectModes[0];
     const rect = this.calculateAspectRect(mode.objectFit, PlayerController.video);
     const renderKey = [
@@ -12703,7 +12800,7 @@ export const PlayerScreen = {
   applyStartupAudioFallback() {
     this.clearStartupAudioPreferenceRetry();
     this.startupAudioFallbackApplied = true;
-    const fallbackOption = this.collectAudioOptionItems().find((entry) => entry.supported);
+    const fallbackOption = selectStartupAudioFallbackOption(this.collectAudioOptionItems());
     if (!fallbackOption?.entry || !Number.isFinite(fallbackOption.entryIndex)) {
       this.startupAudioPreferenceApplied = true;
       return true;
@@ -12994,7 +13091,7 @@ export const PlayerScreen = {
         SUBTITLE_DELAY_MAX_MS
       );
     } else if (controlId === "fontSize") {
-      style.fontSize = normalizeSubtitleFontSize(Number(style.fontSize || 100) + (delta * SUBTITLE_FONT_STEP));
+      style.fontSize = normalizeSubtitleFontSize(Number(style.fontSize || 120) + (delta * SUBTITLE_FONT_STEP));
     } else if (controlId === "bold" && delta !== 0) {
       style.bold = !style.bold;
     } else if (controlId === "textColor" && delta !== 0) {
@@ -13006,11 +13103,23 @@ export const PlayerScreen = {
       const currentIndex = Math.max(0, SUBTITLE_OUTLINE_COLORS.indexOf(String(style.outlineColor || "#000000").toUpperCase()));
       style.outlineColor = SUBTITLE_OUTLINE_COLORS[clamp(currentIndex + delta, 0, SUBTITLE_OUTLINE_COLORS.length - 1)];
     } else if (controlId === "verticalOffset") {
-      style.verticalOffset = normalizeSubtitleVerticalOffset(Number(style.verticalOffset || 0) + (delta * SUBTITLE_VERTICAL_OFFSET_STEP));
+      style.verticalOffset = normalizeSubtitleVerticalOffset(
+        Number(style.verticalOffset ?? SUBTITLE_VERTICAL_OFFSET_DEFAULT)
+          + (delta * SUBTITLE_VERTICAL_OFFSET_STEP)
+      );
     } else if (controlId === "reset") {
-      const defaults = PlayerSettingsStore.get().subtitleStyle;
+      const defaults = PlayerSettingsStore.getDefaults().subtitleStyle;
       this.subtitleDelayMs = 0;
-      this.subtitleStyleSettings = { ...defaults };
+      this.subtitleStyleSettings = {
+        ...style,
+        fontSize: defaults.fontSize,
+        textColor: defaults.textColor,
+        bold: defaults.bold,
+        outlineEnabled: defaults.outlineEnabled,
+        outlineColor: defaults.outlineColor,
+        verticalOffset: defaults.verticalOffset,
+        verticalOffsetContract: defaults.verticalOffsetContract
+      };
     }
 
     if (controlId !== "delay" && controlId !== "reset") {
@@ -13498,7 +13607,12 @@ export const PlayerScreen = {
     const showOptionsRail = activeLanguage !== SUBTITLE_LANGUAGE_OFF_KEY || subtitleLoadingVisible;
     const focusedStyleSide = this.subtitleStyleControlSide === "plus" ? "plus" : "minus";
     const emptySubtitleOptionsMarkup = subtitleLoadingVisible
-      ? `<div class="player-dialog-empty">${escapeHtml(t("subtitle_loading_builtin", {}, "Loading subtitle tracks..."))}</div>`
+      ? `
+        <div class="player-dialog-empty player-dialog-loading">
+          ${renderLoadingIndicator()}
+          <span>${escapeHtml(t("subtitle_loading_builtin", {}, "Loading subtitle tracks..."))}</span>
+        </div>
+      `
       : `<div class="player-dialog-empty">${escapeHtml(t("subtitle_none", {}, "No subtitles"))}</div>`;
 
     dialog.innerHTML = `
@@ -14227,7 +14341,10 @@ export const PlayerScreen = {
       const emptyMessage = loading ? "Loading audio tracks..." : this.getUnavailableTrackMessage("audio");
       dialog.innerHTML = `
         <div class="player-dialog-title">${escapeHtml(t("audio_dialog_title", {}, "Audio"))}</div>
-        <div class="player-dialog-empty">${emptyMessage}</div>
+        <div class="player-dialog-empty${loading ? " player-dialog-loading" : ""}">
+          ${loading ? renderLoadingIndicator() : ""}
+          <span>${escapeHtml(emptyMessage)}</span>
+        </div>
         <div class="player-audio-controls-list">
           ${audioControls.map((control, index) => this.renderAudioControlItem(control, index)).join("")}
         </div>
@@ -14541,9 +14658,27 @@ export const PlayerScreen = {
     this.updateModalBackdrop();
     void this.preloadPlayerSourceLogos();
 
-    if (forceReload || !this.streamCandidates.length) {
+    const sourceRequestKey = this.getSourceRequestKey();
+    // The candidates passed into the player are only a snapshot of the addons
+    // that had replied before playback started. Refresh once per video so a
+    // slower addon can still join the in-player list without a manual reload.
+    if (forceReload || !sourceRequestKey || sourceRequestKey !== this.completedSourceRequestKey) {
       this.reloadSources();
     }
+  },
+
+  getSourceRequestKey() {
+    const type = normalizeItemType(this.params?.itemType || "movie");
+    const videoId = String(this.params?.videoId || this.params?.itemId || "").trim();
+    if (!videoId) {
+      return "";
+    }
+    return [
+      type,
+      videoId,
+      this.params?.season ?? "",
+      this.params?.episode ?? ""
+    ].join("|");
   },
 
   closeSourcesPanel() {
@@ -14564,6 +14699,7 @@ export const PlayerScreen = {
     if (!videoId) {
       return;
     }
+    const sourceRequestKey = this.getSourceRequestKey();
 
     const token = this.sourceLoadToken + 1;
     this.sourceLoadToken = token;
@@ -14612,6 +14748,7 @@ export const PlayerScreen = {
       }
     } finally {
       if (token === this.sourceLoadToken) {
+        this.completedSourceRequestKey = sourceRequestKey;
         this.sourcesLoading = false;
         this.renderSourcesPanel();
         void this.preloadPlayerSourceLogos();
@@ -15877,6 +16014,7 @@ export const PlayerScreen = {
         episode: selected.episode ?? null,
         episodeLabel: `S${selected.season}E${selected.episode}`,
         playerTitle: this.params?.playerTitle || this.params?.itemId,
+        playerReleaseYear: this.params?.playerReleaseYear || this.params?.year || "",
         playerSubtitle: `${selected.title || ""}`.trim() || `S${selected.season}E${selected.episode}`,
         playerBackdropUrl: this.params?.playerBackdropUrl || null,
         playerLogoUrl: this.params?.playerLogoUrl || null,
@@ -15919,6 +16057,10 @@ export const PlayerScreen = {
             subtitleLookup.id,
             subtitleLookup.videoId || null,
             {
+              season: subtitleLookup.season,
+              episode: subtitleLookup.episode,
+              title: subtitleLookup.title,
+              year: subtitleLookup.year,
               videoHash: subtitleLookup.videoHash || null,
               videoSize: subtitleLookup.videoSize || null,
               filename: subtitleLookup.filename || null
@@ -16845,8 +16987,8 @@ export const PlayerScreen = {
 
         if (text.includes("web")) score += 8;
         if (text.includes("bluray")) score += 8;
-        if (text.includes("cam")) score -= 70;
-        if (text.includes("ts")) score -= 40;
+        if (hasReleaseToken(text, "cam")) score -= 70;
+        if (hasReleaseToken(text, "ts")) score -= 40;
 
         if (text.includes("hevc") || text.includes("h265") || text.includes("x265")) {
           score += supports("mp4Hevc", true) || supports("mp4HevcMain10", true) ? 12 : -90;
@@ -16865,10 +17007,18 @@ export const PlayerScreen = {
           score += supports("webmVp9", true) ? 6 : -45;
         }
 
-        if (text.includes("hdr") || text.includes("hdr10") || text.includes("hlg")) {
+        if (
+          hasReleaseToken(text, "hdr") ||
+          hasReleaseToken(text, "hdr10") ||
+          hasReleaseToken(text, "hlg")
+        ) {
           score += supports("hdrLikely", true) ? 16 : -35;
         }
-        if (text.includes("dolby vision") || text.includes(" dv ")) {
+        if (
+          text.includes("dolby vision") ||
+          hasReleaseToken(text, "dv") ||
+          hasReleaseToken(text, "dovi")
+        ) {
           score += supports("dolbyVision", true) ? 18 : -45;
         }
         if (text.includes("atmos") || text.includes("eac3") || text.includes("ec-3")) {

@@ -6,7 +6,7 @@ import { isWatchProgressCompleted } from "../../domain/model/watchProgress.js";
 
 function isSeriesType(type = "") {
   const normalized = String(type || "").trim().toLowerCase();
-  return normalized === "series" || normalized === "tv" || normalized === "show" || normalized === "tvshow";
+  return ["series", "tv", "anime", "show", "tvshow"].includes(normalized);
 }
 
 function firstPositiveInt(values = []) {

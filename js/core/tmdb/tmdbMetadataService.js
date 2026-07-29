@@ -332,8 +332,8 @@ export const TmdbMetadataService = {
 
     const lang = normalizeTmdbLanguageCode(language || settings.language);
     const seasons = [...new Set((Array.isArray(seasonNumbers) ? seasonNumbers : [])
-      .map((season) => Number(season || 0))
-      .filter((season) => Number.isFinite(season) && season > 0))];
+      .map((season) => Number(season))
+      .filter((season) => Number.isFinite(season) && season >= 0))];
     if (!seasons.length) {
       return new Map();
     }

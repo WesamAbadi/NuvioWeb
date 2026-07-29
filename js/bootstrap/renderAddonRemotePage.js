@@ -287,7 +287,7 @@ const AddonRemotePage = {
     this.isBootstrapping = true;
     this.render();
 
-    this.draftAddons = await addonRepository.getInstalledAddons();
+    this.draftAddons = await addonRepository.getInstalledAddons({ includeDisabled: true });
     this.collections = CollectionsStore.get();
     this.catalogPrefs = clonePrefs(HomeCatalogStore.get());
     this.rebuildCatalogItems();

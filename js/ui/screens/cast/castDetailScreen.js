@@ -8,6 +8,7 @@ import {
   posterItemFromNode,
   PosterOptionsDialogController
 } from "../../components/posterOptionsMenu.js";
+import { renderLoadingIndicator } from "../../components/loadingIndicator.js";
 
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w780";
@@ -171,7 +172,10 @@ export const CastDetailScreen = {
   renderLoading() {
     this.container.innerHTML = `
       <div class="cast-detail-shell">
-        <div class="cast-detail-loading">Loading cast profile...</div>
+        <div class="cast-detail-loading">
+          ${renderLoadingIndicator()}
+          <span>Loading cast profile...</span>
+        </div>
       </div>
     `;
   },
@@ -386,7 +390,13 @@ export const CastDetailScreen = {
           Router.navigate("detail", {
             itemId: target.id,
             itemType: target.type || "movie",
-            fallbackTitle: target.title || "Untitled"
+            fallbackTitle: target.title || "Untitled",
+            fallbackPoster: target.poster || "",
+            fallbackBackground: target.background || "",
+            addonBaseUrl: target.addonBaseUrl || "",
+            addonId: target.addonId || "",
+            addonName: target.addonName || "",
+            catalogType: target.catalogType || target.type || "movie"
           });
         },
         onDismiss: () => {

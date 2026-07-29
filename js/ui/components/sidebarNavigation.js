@@ -403,6 +403,12 @@ export function renderModernSidebar({
   `;
 }
 
+export function isModernSidebarBlurAvailable() {
+  return Boolean(
+    globalThis.document?.documentElement?.classList?.contains("modern-sidebar-blur-capable")
+  );
+}
+
 export function renderRootSidebar({
   selectedRoute = "home",
   profile = null,
@@ -416,7 +422,7 @@ export function renderRootSidebar({
       profile,
       expanded,
       pillIconOnly,
-      blurEnabled: Boolean(layout?.modernSidebarBlur)
+      blurEnabled: Boolean(layout?.modernSidebarBlur) && isModernSidebarBlurAvailable()
     });
   }
   return renderLegacySidebar({ selectedRoute, profile, layout });
