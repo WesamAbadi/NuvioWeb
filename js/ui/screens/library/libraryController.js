@@ -17,33 +17,33 @@ const LEADING_ARTICLE_REGEX = /^(the|an|a)\s+/i;
 
 export const LIBRARY_SORT_OPTIONS = [
   {
-    key: LibrarySortOptionKey.DEFAULT,
+    key: "default",
     labelKey: "library_sort_trakt_order",
     fallback: "Trakt Order"
   },
   {
-    key: LibrarySortOptionKey.ADDED_DESC,
+    key: "added_desc",
     labelKey: "library_sort_added_desc",
     fallback: "Added ↓"
   },
-  { key: LibrarySortOptionKey.ADDED_ASC, labelKey: "library_sort_added_asc", fallback: "Added ↑" },
+  { key: "added_asc", labelKey: "library_sort_added_asc", fallback: "Added ↑" },
   {
-    key: LibrarySortOptionKey.TITLE_ASC,
+    key: "title_asc",
     labelKey: "library_sort_title_asc",
     fallback: "Title A-Z"
   },
   {
-    key: LibrarySortOptionKey.TITLE_DESC,
+    key: "title_desc",
     labelKey: "library_sort_title_desc",
     fallback: "Title Z-A"
   }
 ];
 
 export const LIBRARY_PRIVACY_OPTIONS = [
-  LibraryListPrivacy.PRIVATE,
-  LibraryListPrivacy.LINK,
-  LibraryListPrivacy.FRIENDS,
-  LibraryListPrivacy.PUBLIC
+  "private",
+  "link",
+  "friends",
+  "public"
 ];
 
 let persistedPosterFocusKey = null;
