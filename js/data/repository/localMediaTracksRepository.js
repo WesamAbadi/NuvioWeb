@@ -1,4 +1,5 @@
 import { Platform } from "../../platform/index.js";
+import { TizenEngineFsService } from "../../platform/tizen/tizenEngineFsService.js";
 import {
   isWebOsCompanionServiceAvailable,
   requestWebOsCompanionService
@@ -7,7 +8,7 @@ import {
 const LOCAL_MEDIA_SERVER_PORT_CANDIDATES = [2710, 2711, 2712, 2713, 2714];
 const REQUEST_TIMEOUT_MS = 4000;
 const TRACK_CACHE_TTL_MS = 30000;
-const WEBOS_EMPTY_TRACK_CACHE_TTL_MS = 750;
+const WEBOS_EMPTY_TRACK_CACHE_TTL_MS = 5000;
 const WEBOS_LUNA_TRACK_ATTEMPTS = 6;
 const WEBOS_LUNA_TRACK_RETRY_DELAY_MS = 700;
 
@@ -161,6 +162,22 @@ export const localMediaTracksRepository = {
       }
 
       if (Platform.isTizen()) {
+        try {
+          const service = await TizenEngineFsService.ensureStarted();
+          const baseUrl = String(service?.baseUrl || "").replace(/\/+$/, "");
+          if (service?.status === "success" && baseUrl) {
+            const payload = await fetchJson(`${baseUrl}/tracks/${encodeURIComponent(targetUrl)}`);
+            const tracks = Array.isArray(payload) ? payload : [];
+            rememberLocalMediaServerUrl(baseUrl);
+            tracksCache.set(targetUrl, {
+              tracks,
+              expiresAt: Date.now() + TRACK_CACHE_TTL_MS
+            });
+            return tracks;
+          }
+        } catch (_) {
+          // AVPlay metadata remains available when the packaged service cannot start.
+        }
         tracksCache.set(targetUrl, {
           tracks: [],
           expiresAt: Date.now() + Math.min(TRACK_CACHE_TTL_MS, 5000)

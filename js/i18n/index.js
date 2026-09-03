@@ -1,11 +1,14 @@
 import { ThemeStore } from "../data/local/themeStore.js";
 
 const DEFAULT_LOCALE = "en";
+const RTL_LOCALES = new Set(["ar", "he"]);
 const SUPPORTED_LOCALES = [
   "en",
   "ar",
+  "bg",
   "bs",
   "cs",
+  "da",
   "de",
   "el",
   "es",
@@ -27,11 +30,15 @@ const SUPPORTED_LOCALES = [
   "ru",
   "sk",
   "sl",
+  "sr-latn",
+  "sq",
   "sv",
   "ta",
   "tr",
+  "uk",
   "vi",
-  "zh-cn"
+  "zh-cn",
+  "zh-tw"
 ];
 
 const KEY_ALIASES = {
@@ -41,6 +48,7 @@ const KEY_ALIASES = {
   "common.normal": "player_speed_normal",
   "common.notSet": "mdblist_not_set",
   "common.off": "subtitle_off",
+  "common.retry": "action_retry",
   "common.save": "action_save",
   "common.systemDefault": "appearance_language_system",
   "sidebar.addons": "nav_addons",
@@ -149,7 +157,7 @@ const KEY_ALIASES = {
   "stream.debrid.serviceDegraded": "debrid_service_degraded",
   "stream.enginefs.failed": "enginefs_resolution_failed",
   "stream.p2p.failed": "p2p_resolution_failed",
-  "player_error_p2p_disabled": "player_error_p2p_disabled",
+  player_error_p2p_disabled: "player_error_p2p_disabled",
   "stream.debrid.notCached": "debrid_not_cached",
   "stream.p2p.resolving": "p2p_resolving_stream",
   "stream.debrid.resolving": "debrid_resolving_stream",
@@ -173,6 +181,8 @@ const KEY_ALIASES = {
   "settings.integration.mdblist.letterboxd.title": "mdblist_letterboxd_title",
   "settings.integration.mdblist.metacritic.subtitle": "mdblist_metacritic_subtitle",
   "settings.integration.mdblist.metacritic.title": "mdblist_metacritic_title",
+  "settings.integration.mdblist.mal.subtitle": "mdblist_mal_subtitle",
+  "settings.integration.mdblist.mal.title": "mdblist_mal_title",
   "settings.integration.mdblist.subtitle": "settings_mdblist_subtitle",
   "settings.integration.mdblist.tmdb.subtitle": "mdblist_tmdb_subtitle",
   "settings.integration.mdblist.tmdb.title": "mdblist_tmdb_title",
@@ -200,10 +210,18 @@ const KEY_ALIASES = {
   "settings.layout.autoplayTrailerExpandedCard.title": "layout_autoplay_trailer_expanded",
   "settings.layout.blurUnwatched.subtitle": "layout_blur_unwatched_sub",
   "settings.layout.blurUnwatched.title": "layout_blur_unwatched",
+  "settings.layout.blurContinueWatchingNextUp.subtitle": "layout_blur_cw_next_up_sub",
+  "settings.layout.blurContinueWatchingNextUp.title": "layout_blur_cw_next_up",
   "settings.layout.catalogType.subtitle": "layout_catalog_type_sub",
   "settings.layout.catalogType.title": "layout_catalog_type",
   "settings.layout.collapseSidebar.subtitle": "layout_collapse_sidebar_sub",
   "settings.layout.collapseSidebar.title": "layout_collapse_sidebar",
+  "settings.layout.continueWatchingEnabled.subtitle": "layout_cw_enabled_sub",
+  "settings.layout.continueWatchingEnabled.title": "layout_cw_enabled",
+  "settings.layout.continueWatchingSort.default": "layout_cw_sort_default",
+  "settings.layout.continueWatchingSort.streamingStyle": "layout_cw_sort_streaming",
+  "settings.layout.continueWatchingSort.subtitle": "layout_cw_sort_mode_sub",
+  "settings.layout.continueWatchingSort.title": "layout_cw_sort_mode",
   "settings.layout.focusedPosterExpand.subtitle": "layout_expand_poster_sub",
   "settings.layout.focusedPosterExpand.title": "layout_expand_poster",
   "settings.layout.focusedPosterExpandDelay.subtitle": "layout_expand_delay_sub",
@@ -216,6 +234,8 @@ const KEY_ALIASES = {
   "settings.layout.groups.homeContent.title": "layout_section_content",
   "settings.layout.groups.homeLayout.subtitle": "layout_section_home_desc",
   "settings.layout.groups.homeLayout.title": "layout_section_home",
+  "settings.layout.groups.continueWatching.subtitle": "layout_section_continue_watching_desc",
+  "settings.layout.groups.continueWatching.title": "layout_section_continue_watching",
   "settings.layout.heroSection.subtitle": "layout_show_hero_sub",
   "settings.layout.heroSection.title": "layout_show_hero",
   "settings.layout.hideUnreleased.subtitle": "layout_hide_unreleased_sub",
@@ -234,6 +254,8 @@ const KEY_ALIASES = {
   "settings.layout.modernSidebar.title": "layout_modern_sidebar",
   "settings.layout.modernSidebarBlur.subtitle": "layout_modern_sidebar_blur_sub",
   "settings.layout.modernSidebarBlur.title": "layout_modern_sidebar_blur",
+  "settings.layout.nextUpFromFurthest.subtitle": "layout_next_up_furthest_episode_sub",
+  "settings.layout.nextUpFromFurthest.title": "layout_next_up_furthest_episode",
   "settings.layout.posterLabels.subtitle": "layout_poster_labels_sub",
   "settings.layout.posterLabels.title": "layout_poster_labels",
   "settings.layout.preferExternalMeta.subtitle": "layout_prefer_external_meta_sub",
@@ -242,6 +264,8 @@ const KEY_ALIASES = {
   "settings.layout.searchDiscover.title": "layout_show_discover",
   "settings.layout.showTrailerButton.subtitle": "layout_trailer_button_sub",
   "settings.layout.showTrailerButton.title": "layout_trailer_button",
+  "settings.layout.showUnairedNextUp.subtitle": "layout_show_unaired_next_up_sub",
+  "settings.layout.showUnairedNextUp.title": "layout_show_unaired_next_up",
   "settings.layout.trailerMuted.subtitle": "layout_trailer_muted_sub_preview",
   "settings.layout.trailerMuted.title": "layout_trailer_muted",
   "settings.layout.trailerMutedExpandedCard.subtitle": "layout_trailer_muted_sub_expanded",
@@ -250,6 +274,8 @@ const KEY_ALIASES = {
   "settings.layout.trailerTarget.title": "layout_trailer_location",
   "settings.layout.trailerTargets.expandedCard": "layout_trailer_expanded_card",
   "settings.layout.trailerTargets.heroMedia": "layout_trailer_hero_media",
+  "settings.layout.useEpisodeThumbnailsInCw.subtitle": "layout_use_episode_thumbnails_cw_sub",
+  "settings.layout.useEpisodeThumbnailsInCw.title": "layout_use_episode_thumbnails_cw",
   "settings.playback.nextEpisodeThresholdMinutes.subtitle": "autoplay_threshold_min_sub",
   "settings.playback.nextEpisodeThresholdMinutes.title": "autoplay_threshold_min_title",
   "settings.playback.nextEpisodeThresholdMode.minutes": "autoplay_threshold_min",
@@ -266,6 +292,8 @@ const KEY_ALIASES = {
   "settings.playback.autoplayTrailer.title": "audio_autoplay_trailers",
   "settings.playback.stillWatching.subtitle": "still_watching_setting_sub",
   "settings.playback.stillWatching.title": "still_watching_setting_title",
+  "settings.playback.stillWatchingThreshold.subtitle": "still_watching_threshold_sub",
+  "settings.playback.stillWatchingThreshold.title": "still_watching_threshold_title",
   "settings.playback.subtitleBold.subtitle": "subtitle_bold_subtitle",
   "settings.playback.subtitleBold.title": "subtitle_bold",
   "settings.playback.subtitleOffset.default": "subtitle_position_default",
@@ -359,7 +387,6 @@ const KEY_ALIASES = {
   "auth.qr.title": "auth_qr_title",
   "auth.qr.unavailable": "auth_qr_unavailable",
   "common.all": "common_all",
-  "common.beta": "common_beta",
   "auth.signIn.back": "auth_qr_back",
   "auth.signIn.description": "auth_signin_tv_disabled",
   "auth.signIn.emailPrompt": "debug_email_placeholder",
@@ -367,7 +394,18 @@ const KEY_ALIASES = {
   "auth.signIn.passwordPrompt": "debug_password_placeholder",
   "auth.signIn.title": "auth_signin_title",
   "auth.syncCode.back": "auth_qr_back",
-  "auth.syncCode.title": "account_sync_code_title"
+  "auth.syncCode.title": "account_sync_code_title",
+  "common.close": "action_close",
+  "settings.tracking.openSettings": "settings_tracking_title",
+  "settings.tracking.openSettingsSubtitle": "settings_tracking_description",
+  layout_hero_catalog: "layout_hero_catalogs",
+  layout_hero_catalog_sub: "layout_hero_catalogs_sub",
+  tracking_more_like_this_source: "trakt_more_like_this_source_title",
+  tracking_more_like_this_source_subtitle: "trakt_more_like_this_source_subtitle",
+  trakt_connect: "trakt_login",
+  trakt_days: "trakt_days_format",
+  trakt_generate_code: "sync_generate_code_btn",
+  trakt_watch_progress_source_title: "trakt_watch_progress_title"
 };
 
 const warnedKeys = new Set();
@@ -585,6 +623,14 @@ export const I18n = {
 
   resolveLocale(preferred = null) {
     return resolvePreferredLocale(preferred);
+  },
+
+  isRtl(locale = this.getLocale()) {
+    const language = String(locale || "")
+      .trim()
+      .toLowerCase()
+      .split(/[-_]/, 1)[0];
+    return RTL_LOCALES.has(language);
   },
 
   getSupportedLocales() {

@@ -11,21 +11,27 @@ export function getSubtitleAssAlignmentSettings(alignment) {
   const column = ((value - 1) % 3) + 1;
   const row = Math.ceil(value / 3);
   return {
-    line: row === 3 ? 10 : (row === 2 ? 50 : 90),
-    align: column === 1 ? "start" : (column === 3 ? "end" : "center")
+    line: row === 3 ? 10 : row === 2 ? 50 : 90,
+    align: column === 1 ? "start" : column === 3 ? "end" : "center"
   };
 }
 
 export function parseVttCueLayout(timingLine) {
   const value = String(timingLine || "");
   const lineMatch = value.match(/(?:^|\s)line:([+-]?(?:\d+(?:\.\d+)?|\.\d+))%/i);
+  const posMatch = value.match(/(?:^|\s)position:(\d+(?:\.\d+)?)%/i);
   const alignMatch = value.match(/(?:^|\s)align:(start|center|end|left|right)\b/i);
+  const sizeMatch = value.match(/(?:^|\s)size:(\d+(?:\.\d+)?)%/i);
   const rawLine = lineMatch ? Number(lineMatch[1]) : NaN;
+  const rawPos = posMatch ? Number(posMatch[1]) : NaN;
   const rawAlign = String(alignMatch?.[1] || "").toLowerCase();
-  const align = rawAlign === "left" ? "start" : (rawAlign === "right" ? "end" : rawAlign);
+  const rawSize = sizeMatch ? Number(sizeMatch[1]) : NaN;
+  const align = rawAlign === "left" ? "start" : rawAlign === "right" ? "end" : rawAlign;
   return {
     line: Number.isFinite(rawLine) ? Math.min(100, Math.max(0, rawLine)) : null,
-    align: align === "start" || align === "end" || align === "center" ? align : "center"
+    position: Number.isFinite(rawPos) ? Math.min(100, Math.max(0, rawPos)) : null,
+    align: align === "start" || align === "end" || align === "center" ? align : "center",
+    size: Number.isFinite(rawSize) && rawSize > 0 ? Math.min(200, rawSize) : null
   };
 }
 
@@ -43,13 +49,10 @@ export function buildHtmlSubtitleCue(cue, originalState = null, text = null) {
 
   const snapToLines = source.snapToLines;
   const rawLine = Number(source.line);
-  const line = snapToLines === false && Number.isFinite(rawLine)
-    ? Math.min(100, Math.max(0, rawLine))
-    : null;
+  const line =
+    snapToLines === false && Number.isFinite(rawLine) ? Math.min(100, Math.max(0, rawLine)) : null;
   const rawAlign = String(cue.align || source.align || "").toLowerCase();
-  const align = rawAlign === "left"
-    ? "start"
-    : (rawAlign === "right" ? "end" : rawAlign);
+  const align = rawAlign === "left" ? "start" : rawAlign === "right" ? "end" : rawAlign;
 
   return {
     start,

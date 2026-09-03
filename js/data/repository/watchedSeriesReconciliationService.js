@@ -5,8 +5,19 @@ import { detailWatchedEnrichmentService } from "./detailWatchedEnrichmentService
 import { isWatchProgressCompleted } from "../../domain/model/watchProgress.js";
 
 function isSeriesType(type = "") {
-  const normalized = String(type || "").trim().toLowerCase();
+  const normalized = String(type || "")
+    .trim()
+    .toLowerCase();
   return ["series", "tv", "anime", "show", "tvshow"].includes(normalized);
+}
+
+function isRemoteSimklSeriesMarker(item = {}, contentIds = new Set()) {
+  return (
+    String(item?.trackingProviderId || "").toLowerCase() === "simkl" &&
+    contentIds.has(String(item?.contentId || "")) &&
+    item?.season == null &&
+    item?.episode == null
+  );
 }
 
 function firstPositiveInt(values = []) {
@@ -44,11 +55,8 @@ function normalizeEpisode(video = {}) {
     video.number,
     parsed?.episode
   ]);
-  const season = firstPositiveInt([
-    video.season,
-    video.seasonNumber,
-    parsed?.season
-  ]) || (episode ? 1 : null);
+  const season =
+    firstPositiveInt([video.season, video.seasonNumber, parsed?.season]) || (episode ? 1 : null);
   if (!video.id || !season || !episode) {
     return null;
   }
@@ -125,14 +133,7 @@ function watchedItemEpisodeKey(item = {}) {
 }
 
 function buildContentIds(contentId, meta = {}) {
-  return new Set(
-    [
-      contentId,
-      meta?.id
-    ]
-      .map((value) => String(value || "").trim())
-      .filter(Boolean)
-  );
+  return new Set([contentId, meta?.id].map((value) => String(value || "").trim()).filter(Boolean));
 }
 
 async function loadSeriesMeta(contentId, contentType, meta = null) {
@@ -148,20 +149,30 @@ async function loadSeriesMeta(contentId, contentType, meta = null) {
   }
 }
 
-async function markReleasedEpisodes(contentId, contentType, meta, watchedAt = Date.now()) {
+async function markReleasedEpisodes(
+  contentId,
+  contentType,
+  meta,
+  watchedAt = Date.now(),
+  { skipTrackingWrite = false } = {}
+) {
   const episodes = getReleasedMainEpisodes(meta);
   if (!episodes.length) {
     return false;
   }
   for (const episode of episodes) {
-    await watchedItemsRepository.mark({
-      contentId,
-      contentType,
-      title: episode.title || meta?.name || contentId,
-      season: episode.season,
-      episode: episode.episode,
-      watchedAt
-    });
+    await watchedItemsRepository.mark(
+      {
+        contentId,
+        contentType,
+        title: episode.title || meta?.name || contentId,
+        season: episode.season,
+        episode: episode.episode,
+        videoId: episode.id,
+        watchedAt
+      },
+      { skipTrackingWrite }
+    );
     await watchProgressRepository.saveProgress({
       contentId,
       contentType,
@@ -200,6 +211,9 @@ export const watchedSeriesReconciliationService = {
       watchProgressRepository.getAll().catch(() => []),
       watchedItemsRepository.isWatched(normalizedContentId).catch(() => false)
     ]);
+    const hasRemoteSimklSeriesMarker = watchedItems.some((item) =>
+      isRemoteSimklSeriesMarker(item, contentIds)
+    );
 
     const watchedEpisodeKeys = new Set();
     watchedItems.forEach((item) => {
@@ -231,17 +245,24 @@ export const watchedSeriesReconciliationService = {
     );
 
     if (allWatched && !hasSeriesMarker) {
-      await watchedItemsRepository.mark({
-        contentId: normalizedContentId,
-        contentType: normalizedType,
-        title: meta?.name || options.title || normalizedContentId,
-        watchedAt: Date.now()
-      });
+      await watchedItemsRepository.mark(
+        {
+          contentId: normalizedContentId,
+          contentType: normalizedType,
+          title: meta?.name || options.title || normalizedContentId,
+          watchedAt: Date.now()
+        },
+        { skipTrackingWrite: true }
+      );
       detailWatchedEnrichmentService.invalidateCache(normalizedContentId);
       return true;
     }
 
-    if (!allWatched && hasSeriesMarker) {
+    // A completed Simkl entry with no episode history is projected as a root
+    // watched marker, matching Android. It is provider state, not a local
+    // marker inferred from the episodes currently returned by the meta addon,
+    // so do not erase it merely because those episode rows are incomplete.
+    if (!allWatched && hasSeriesMarker && !hasRemoteSimklSeriesMarker) {
       await watchedItemsRepository.unmark(normalizedContentId, { rootOnly: true });
       detailWatchedEnrichmentService.invalidateCache(normalizedContentId);
       return true;
@@ -265,7 +286,9 @@ export const watchedSeriesReconciliationService = {
       watchedAt
     });
     if (meta) {
-      await markReleasedEpisodes(normalizedContentId, normalizedType, meta, watchedAt);
+      await markReleasedEpisodes(normalizedContentId, normalizedType, meta, watchedAt, {
+        skipTrackingWrite: true
+      });
     }
     detailWatchedEnrichmentService.invalidateCache(normalizedContentId);
     return true;
@@ -283,7 +306,9 @@ export const watchedSeriesReconciliationService = {
     for (const episode of episodes) {
       await watchedItemsRepository.unmark(normalizedContentId, {
         season: episode.season,
-        episode: episode.episode
+        episode: episode.episode,
+        videoId: episode.id,
+        skipTrackingWrite: true
       });
       await watchProgressRepository.removeProgress(normalizedContentId, episode.id);
     }

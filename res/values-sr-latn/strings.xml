@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="autoplay_post_play_recommendations">Preporuke nakon reprodukcije</string>
+    <string name="autoplay_post_play_recommendations_sub">Prikaži preporuke blizu kraja filmova i serija.</string>
+    <string name="autoplay_post_play_movie_threshold">Vreme preporuke za film</string>
+    <string name="autoplay_post_play_movie_threshold_sub">Izaberite kada se pojavljuju preporuke za filmove. Epizode prate podešavanje praga za sledeću epizodu.</string>
+    <string name="hero_play">Pusti</string>
+    <string name="play_manually">Pusti ručno</string>
+    <string name="player_post_play_because">Zato što ste gledali %1$s</string>
+    <string name="player_post_play_recommended">Preporučeno za vas</string>
+    <string name="player_post_play_play">Pusti</string>
+    <string name="player_post_play_manual_subtitle">Pusti</string>
+    <string name="player_post_play_play_manually">Pusti ručno</string>
+    <string name="player_post_play_previous_recommendation">Prethodna preporuka</string>
+    <string name="player_post_play_next_recommendation">Sledeća preporuka</string>
+    <string name="player_post_play_return_to_player">Vrati se u plejer</string>
+    <string name="player_post_play_trailer_countdown">Trejler za %1$d</string>
+    <string name="player_post_play_trailer_playing">Trejler se pušta</string>
+    <string name="player_post_play_trailer">Trejler</string>
+    <string name="hero_synopsis_read_more">Pročitaj više</string>
+    <string name="hero_synopsis_dismiss_hint">Pritisnite nazad za zatvaranje</string>
+</resources>

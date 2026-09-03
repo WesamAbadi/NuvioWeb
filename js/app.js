@@ -1,3 +1,5 @@
+/* global __NUVIO_APP_VERSION__ */
+
 import "./platform/adapters/browser/webInputAdapter.js";
 import "./core/diagnostics/consoleDebugBuffer.js";
 import { detailWatchedEnrichmentService } from "./data/repository/detailWatchedEnrichmentService.js";
@@ -6,17 +8,31 @@ import { FocusEngine } from "./ui/navigation/focusEngine.js";
 import { PlayerController } from "./core/player/playerController.js";
 import { AuthManager } from "./core/auth/authManager.js";
 import { AuthState } from "./core/auth/authState.js";
+import { DeviceSessionRegistration } from "./core/auth/deviceSessionRegistration.js";
 import { ProfileManager } from "./core/profile/profileManager.js";
+import { MemberAccessRepository } from "./data/remote/supabase/memberAccessRepository.js";
 import { ProfileSyncService } from "./core/profile/profileSyncService.js";
 import { StartupSyncService } from "./core/profile/startupSyncService.js";
+import { ProviderCredentialSyncService } from "./core/profile/providerCredentialSyncService.js";
 import { ThemeManager } from "./ui/theme/themeManager.js";
 import { renderAppShell } from "./bootstrap/renderAppShell.js";
 import { renderAddonRemotePage } from "./bootstrap/renderAddonRemotePage.js";
 import { preloadStreamBadgeImages } from "./ui/screens/stream/streamScreen.js";
 import { warmStreamingLibs } from "./runtime/loadStreamingLibs.js";
 import { Platform } from "./platform/index.js";
+import { getTvRuntimePerformanceProfile } from "./platform/tvRuntimePerformance.js";
 import { LocalStore } from "./core/storage/localStore.js";
 import { I18n } from "./i18n/index.js";
+import { getLatestAppUpdate } from "./core/update/appUpdateService.js";
+import { shouldShowUpdate } from "./core/update/updateBannerPolicy.js";
+import { showAppUpdatePrompt } from "./ui/components/appUpdatePrompt.js";
+import { resolveExperienceRoute } from "./core/profile/experienceModeRouting.js";
+import { PluginRuntime } from "./core/player/pluginRuntime.js";
+
+// These legacy Web-only overrides are no longer user settings. Navigation now
+// uses the stable grid algorithm and simulator detection automatically.
+LocalStore.remove("strictDpadGridNavigation");
+LocalStore.remove("rotatedDpadMapping");
 
 (function applyLegacyPatches() {
   const originalGetElementById = document.getElementById;
@@ -34,11 +50,49 @@ const GUEST_QR_BYPASS_KEY = "skipAuthQrGate";
 const SIGNED_OUT_ALLOWED_ROUTES = new Set(["trakt"]);
 let hasSelectedProfileThisSession = false;
 let appShellRendered = false;
+let updateCheckStarted = false;
+
+const APP_VERSION = typeof __NUVIO_APP_VERSION__ !== "undefined" ? __NUVIO_APP_VERSION__ : "0.0.0";
+const UPDATE_DISMISSED_TAG_KEY = "app_update_dismissed_tag";
 
 function markBootStage(stage) {
   const guard = globalThis.NuvioBootGuard;
   if (guard && typeof guard.stage === "function") {
     guard.stage(stage);
+  }
+}
+
+async function waitForInitialRoute(timeoutMs = 15000) {
+  const startedAt = Date.now();
+  while (!Router.getCurrent() && Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return Boolean(Router.getCurrent());
+}
+
+async function checkForAppUpdateOnStartup() {
+  if (updateCheckStarted) {
+    return;
+  }
+  updateCheckStarted = true;
+
+  try {
+    const update = await getLatestAppUpdate({ currentVersion: APP_VERSION });
+    if (!update) {
+      return;
+    }
+    const dismissedTag = LocalStore.get(UPDATE_DISMISSED_TAG_KEY, null);
+    if (!shouldShowUpdate({ isRemoteNewer: true, dismissedTag, updateTag: update.tag })) {
+      return;
+    }
+    if (!(await waitForInitialRoute())) {
+      return;
+    }
+    showAppUpdatePrompt(update, {
+      onClose: () => LocalStore.set(UPDATE_DISMISSED_TAG_KEY, update.tag)
+    });
+  } catch (error) {
+    console.warn("App update check failed", error);
   }
 }
 
@@ -79,6 +133,12 @@ function renderFatalError(error) {
 }
 
 function isLowEndDevice() {
+  // TV runtimes use the year/Chromium profile below. Their exposed
+  // hardwareConcurrency/deviceMemory values are often coarse and would mark
+  // otherwise modern TV generations as low-end by accident.
+  if (getTvRuntimePerformanceProfile().isTvRuntime) {
+    return false;
+  }
   const hardware = Number(globalThis.navigator?.hardwareConcurrency || 0);
   const memory = Number(globalThis.navigator?.deviceMemory || 0);
   const lowCpu = Number.isFinite(hardware) && hardware > 0 && hardware <= 4;
@@ -86,24 +146,17 @@ function isLowEndDevice() {
   return lowCpu || lowMem;
 }
 
-function getChromiumMajorVersion() {
-  const userAgent = String(globalThis.navigator?.userAgent || "");
-  const match = userAgent.match(/(?:chrome|chromium)\/(\d{2,3})/i);
-  const version = Number(match?.[1] || 0);
-  return Number.isFinite(version) ? version : 0;
-}
-
 function applyPerformanceMode() {
-  const constrained = Platform.isWebOS() || Platform.isTizen() || isLowEndDevice();
+  const tvRuntime = getTvRuntimePerformanceProfile();
+  const constrained = tvRuntime.isPerformanceConstrained || isLowEndDevice();
   const webOsMajorVersion = Platform.isWebOS() ? Number(Platform.getWebOsMajorVersion() || 0) : 0;
-  const legacyWebOs = Platform.isWebOS() && (webOsMajorVersion === 0 || webOsMajorVersion <= 6);
+  const legacyWebOs = Platform.isWebOS() && tvRuntime.isLegacyTvRuntime;
   const legacyWebOs38 = Platform.isWebOS() && webOsMajorVersion > 0 && webOsMajorVersion <= 3;
+  // Keep the Tizen class as a platform-layout fallback; performance gating is
+  // handled exclusively by the runtime profile above.
   const legacyTizen = Platform.isTizen();
   const rootClasses = document.documentElement.classList;
-  const modernWebOs = Platform.isWebOS() && getChromiumMajorVersion() >= 120;
-  const modernSidebarBlurCapable =
-    !rootClasses.contains("no-backdrop-filter") &&
-    ((!constrained && !legacyTizen) || modernWebOs);
+  const modernSidebarBlurCapable = !rootClasses.contains("no-backdrop-filter") && !constrained;
   document.documentElement.classList.toggle("performance-constrained", constrained);
   document.body.classList.toggle("performance-constrained", constrained);
   document.documentElement.classList.toggle(
@@ -117,14 +170,11 @@ function applyPerformanceMode() {
   document.body.classList.toggle("legacy-webos38", legacyWebOs38);
   document.documentElement.classList.toggle("legacy-tizen", legacyTizen);
   document.body.classList.toggle("legacy-tizen", legacyTizen);
-  [
-    "no-flex-gap",
-    "no-aspect-ratio",
-    "no-css-math",
-    "no-backdrop-filter"
-  ].forEach((className) => {
-    document.body.classList.toggle(className, rootClasses.contains(className));
-  });
+  ["no-flex-gap", "no-css-grid", "no-aspect-ratio", "no-css-math", "no-backdrop-filter"].forEach(
+    (className) => {
+      document.body.classList.toggle(className, rootClasses.contains(className));
+    }
+  );
 }
 
 function isAddonRemoteMode() {
@@ -177,24 +227,40 @@ async function enterWithLastProfile({ restoreWebOsRoute = false } = {}) {
     StartupSyncService.enableProfileScopedSync();
     detailWatchedEnrichmentService.invalidateAllCache();
     await I18n.init();
-    ThemeManager.apply();
+    const memberAccess = MemberAccessRepository.getCachedAccess();
+    ThemeManager.apply({ enforceAccess: true, access: memberAccess });
+    void MemberAccessRepository.getAccess().catch((error) => {
+      console.warn("Profile member access refresh failed", error);
+    });
     I18n.apply();
     void preloadStreamBadgeImages().catch((error) => {
       console.warn("Stream badge image prerender failed", error);
     });
   }
-  const resumeRoute = restoreWebOsRoute && typeof Router.consumeWebOsResumeRoute === "function"
-    ? Router.consumeWebOsResumeRoute()
-    : null;
-  if (resumeRoute?.route) {
+  const experienceRoute = activeProfile ? await resolveExperienceRoute(activeProfile.id) : "home";
+  const resumeRoute =
+    restoreWebOsRoute && typeof Router.consumeWebOsResumeRoute === "function"
+      ? Router.consumeWebOsResumeRoute()
+      : null;
+  const isHomeResumeRoute = resumeRoute?.route === "home";
+
+  if (experienceRoute !== "home") {
+    await Router.navigate(experienceRoute, {}, { replaceHistory: true, skipStackPush: true });
+  } else if (resumeRoute?.route && !isHomeResumeRoute) {
     await Router.navigate(resumeRoute.route, resumeRoute.params || {}, {
       replaceHistory: true,
       skipStackPush: true
     });
   } else {
-    await Router.navigate("home");
+    await Router.navigate("home", {
+      ...(isHomeResumeRoute ? resumeRoute.params || {} : {}),
+      ...(StartupSyncService.started ? { forceReload: true } : {})
+    });
   }
-  void StartupSyncService.requestSyncNow().catch((error) => {
+
+  void StartupSyncService.requestSyncNow({
+    notifyPullCompleted: ["home", "plugins"].includes(experienceRoute)
+  }).catch((error) => {
     console.warn("Profile background sync failed", error);
   });
 }
@@ -264,6 +330,9 @@ function setupWebOsAppLifecycle() {
     if (recovering || !appShellRendered) {
       return;
     }
+    void DeviceSessionRegistration.requestForegroundRegistration();
+    ProviderCredentialSyncService.requestForegroundPull();
+    StartupSyncService.requestForegroundSync();
     const current = Router.getCurrent();
     if (!current) {
       return;
@@ -273,7 +342,8 @@ function setupWebOsAppLifecycle() {
       if (document.body) {
         document.body.style.removeProperty("display");
       }
-      if (current === "debugConsole") {
+      const shouldReturnHome = !Router.isWebOsResumeRouteRestorable(current);
+      if (shouldReturnHome) {
         await Router.navigate(
           "home",
           {},
@@ -342,6 +412,53 @@ function setupWebOsAppLifecycle() {
   installNativeCallback(globalThis.PalmSystem, "PalmSystem", "ondeactivate");
 }
 
+function setupProviderCredentialForegroundLifecycle() {
+  let wasBackgrounded = document.visibilityState === "hidden" || document.webkitHidden === true;
+  const requestAfterBackground = () => {
+    if (!wasBackgrounded) return;
+    wasBackgrounded = false;
+    ProviderCredentialSyncService.requestForegroundPull();
+    StartupSyncService.requestForegroundSync();
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      wasBackgrounded = true;
+    } else if (document.visibilityState === "visible") {
+      requestAfterBackground();
+    }
+  });
+  document.addEventListener("webkitvisibilitychange", () => {
+    if (document.webkitHidden === true) {
+      wasBackgrounded = true;
+    } else {
+      requestAfterBackground();
+    }
+  });
+  window.addEventListener("pagehide", () => {
+    wasBackgrounded = true;
+  });
+  window.addEventListener("pageshow", (event) => {
+    if (event?.persisted) requestAfterBackground();
+  });
+  window.addEventListener("blur", () => {
+    wasBackgrounded = true;
+  });
+  window.addEventListener("focus", requestAfterBackground);
+}
+
+function setupPluginRuntimeLifecycle() {
+  const cancel = () => PluginRuntime.cancelAll();
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") cancel();
+  });
+  document.addEventListener("webkitvisibilitychange", () => {
+    if (document.webkitHidden === true) cancel();
+  });
+  window.addEventListener("pagehide", cancel);
+  window.addEventListener("beforeunload", cancel);
+  document.addEventListener("nuvio:beforeExitApp", cancel);
+}
+
 async function bootstrapApp() {
   markBootStage("Rendering application shell");
   renderAppShell();
@@ -357,21 +474,27 @@ async function bootstrapApp() {
   PlayerController.init();
 
   FocusEngine.init();
+  setupProviderCredentialForegroundLifecycle();
+  setupPluginRuntimeLifecycle();
   setupWebOsAppLifecycle();
 
   ThemeManager.apply();
   I18n.apply();
   warmStreamingLibs({ delayMs: 1400 });
+  void checkForAppUpdateOnStartup();
 
   markBootStage("Restoring session");
+  DeviceSessionRegistration.start();
   AuthManager.subscribe((state) => {
     if (state === AuthState.LOADING) {
       StartupSyncService.stop();
+      ProviderCredentialSyncService.cancelForegroundPull();
       return;
     }
 
     if (state === AuthState.SIGNED_OUT) {
       StartupSyncService.stop();
+      ProviderCredentialSyncService.cancelForegroundPull();
       hasSelectedProfileThisSession = false;
       const shouldBypassQr = Boolean(LocalStore.get(GUEST_QR_BYPASS_KEY, false));
       if (isSignedOutRouteAllowed()) {
@@ -388,7 +511,11 @@ async function bootstrapApp() {
             console.warn("Failed to enter with last profile", error);
             ProfileManager.clearActiveProfile();
             if (Router.getCurrent() !== "profileSelection") {
-              Router.navigate("profileSelection", {}, { replaceHistory: true, skipStackPush: true });
+              Router.navigate(
+                "profileSelection",
+                {},
+                { replaceHistory: true, skipStackPush: true }
+              );
             }
           });
           return;

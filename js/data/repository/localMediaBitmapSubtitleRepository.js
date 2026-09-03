@@ -8,7 +8,10 @@ const MAX_PREPARED_SOURCES = 4;
 function withTimeout(promise, timeoutMs) {
   let timeoutId = 0;
   const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error("webOS bitmap subtitle request timed out")), timeoutMs);
+    timeoutId = setTimeout(
+      () => reject(new Error("webOS bitmap subtitle request timed out")),
+      timeoutMs
+    );
   });
   return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
 }
@@ -20,6 +23,10 @@ function decodeBase64(value) {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function getRequestErrorMessage(error, fallback) {
+  return String(error?.errorText || error?.message || error?.errorCode || fallback);
 }
 
 export const localMediaBitmapSubtitleRepository = {
@@ -37,16 +44,20 @@ export const localMediaBitmapSubtitleRepository = {
         parameters: { url: targetUrl }
       }),
       REQUEST_TIMEOUT_MS
-    ).then((result) => {
-      const payload = result?.payload || {};
-      if (payload.returnValue === false) {
-        throw new Error(payload.errorText || payload.errorCode || "Bitmap subtitle preparation failed");
-      }
-      return payload;
-    }).catch((error) => {
-      preparedSources.delete(targetUrl);
-      throw error;
-    });
+    )
+      .then((result) => {
+        const payload = result?.payload || {};
+        if (payload.returnValue === false) {
+          throw new Error(
+            payload.errorText || payload.errorCode || "Bitmap subtitle preparation failed"
+          );
+        }
+        return payload;
+      })
+      .catch((error) => {
+        preparedSources.delete(targetUrl);
+        throw error;
+      });
     preparedSources.set(targetUrl, request);
     while (preparedSources.size > MAX_PREPARED_SOURCES) {
       preparedSources.delete(preparedSources.keys().next().value);
@@ -61,33 +72,46 @@ export const localMediaBitmapSubtitleRepository = {
       throw new Error("Invalid embedded bitmap subtitle request");
     }
 
-    const result = await withTimeout(
-      requestWebOsCompanionService({
-        method: "bitmapSubtitleWindow",
-        parameters: {
-          url: targetUrl,
-          trackNumber: targetTrack,
-          startSeconds: Math.max(0, Number(startSeconds) || 0),
-          endSeconds: Math.max(1, Number(endSeconds) || 0)
-        }
-      }),
-      WINDOW_REQUEST_TIMEOUT_MS
-    );
+    let result;
+    try {
+      result = await withTimeout(
+        requestWebOsCompanionService({
+          method: "bitmapSubtitleWindow",
+          parameters: {
+            url: targetUrl,
+            trackNumber: targetTrack,
+            startSeconds: Math.max(0, Number(startSeconds) || 0),
+            endSeconds: Math.max(1, Number(endSeconds) || 0)
+          }
+        }),
+        WINDOW_REQUEST_TIMEOUT_MS
+      );
+    } catch (error) {
+      throw new Error(getRequestErrorMessage(error, "Bitmap subtitle extraction failed"));
+    }
     const payload = result?.payload || {};
     if (payload.returnValue === false) {
-      throw new Error(payload.errorText || payload.errorCode || "Bitmap subtitle extraction failed");
+      throw new Error(
+        payload.errorText || payload.errorCode || "Bitmap subtitle extraction failed"
+      );
     }
-    if (String(payload.format || "").toLowerCase() !== "vobsub") {
+    const format = String(payload.format || "").toLowerCase();
+    if (format !== "vobsub" && format !== "pgs") {
       throw new Error("Unsupported bitmap subtitle response");
     }
+    const encodedData = format === "pgs" ? payload.supBase64 : payload.subBase64;
 
     return {
+      format,
       trackNumber: targetTrack,
       windowStartSeconds: Math.max(0, Number(payload.windowStartSeconds) || 0),
       windowEndSeconds: Math.max(0, Number(payload.windowEndSeconds) || 0),
+      contextStartSeconds: Math.max(0, Number(payload.contextStartSeconds) || 0),
+      contextType: String(payload.contextType || ""),
       cueCount: Math.max(0, Math.trunc(Number(payload.cueCount) || 0)),
-      idxContent: String(payload.idxContent || ""),
-      subData: decodeBase64(payload.subBase64)
+      segmentCount: Math.max(0, Math.trunc(Number(payload.segmentCount) || 0)),
+      idxContent: format === "vobsub" ? String(payload.idxContent || "") : "",
+      data: decodeBase64(encodedData)
     };
   }
 };

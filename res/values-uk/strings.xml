@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="hero_play">Дивитися</string>
+    <string name="play_manually">Відтворити вручну</string>
+    <string name="player_post_play_play_manually">Відтворити вручну</string>
+    <string name="player_post_play_manual_subtitle">Дивитися</string>
+</resources>

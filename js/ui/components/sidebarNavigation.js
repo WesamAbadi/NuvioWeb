@@ -1,8 +1,9 @@
 import { Router } from "../navigation/router.js";
 import { ProfileManager } from "../../core/profile/profileManager.js";
 import { AvatarRepository } from "../../data/remote/supabase/avatarRepository.js";
+import { MemberAccessRepository } from "../../data/remote/supabase/memberAccessRepository.js";
 import { I18n } from "../../i18n/index.js";
-import { Platform } from "../../platform/index.js";
+import { getTvRuntimePerformanceProfile } from "../../platform/tvRuntimePerformance.js";
 
 const ROOT_SIDEBAR_ITEMS = [
   {
@@ -11,7 +12,8 @@ const ROOT_SIDEBAR_ITEMS = [
     labelKey: "sidebar.home",
     iconType: "svg",
     viewBox: "0 0 24 24",
-    iconMarkup: '<path d="M12 3.2 3.5 10v10.25c0 .69.56 1.25 1.25 1.25h5.5v-6.5h3.5v6.5h5.5c.69 0 1.25-.56 1.25-1.25V10L12 3.2Zm0 1.92 7 5.6v9.53h-4v-6.5H9v6.5H5v-9.53l7-5.6Z"/>'
+    iconMarkup:
+      '<path d="M12 3.2 3.5 10v10.25c0 .69.56 1.25 1.25 1.25h5.5v-6.5h3.5v6.5h5.5c.69 0 1.25-.56 1.25-1.25V10L12 3.2Zm0 1.92 7 5.6v9.53h-4v-6.5H9v6.5H5v-9.53l7-5.6Z"/>'
   },
   {
     action: "gotoSearch",
@@ -42,7 +44,27 @@ const ROOT_SIDEBAR_ITEMS = [
   }
 ];
 
-let sidebarAvatarCatalogPromise = null;
+const DISCOVER_SIDEBAR_ITEM = {
+  action: "gotoDiscover",
+  route: "discover",
+  labelKey: "discover_title",
+  iconType: "material",
+  iconName: "explore"
+};
+
+function sidebarItems(layout = {}) {
+  if (String(layout?.discoverLocation || "in_search") !== "in_sidebar") {
+    return ROOT_SIDEBAR_ITEMS;
+  }
+  return [
+    ROOT_SIDEBAR_ITEMS[0],
+    ROOT_SIDEBAR_ITEMS[1],
+    DISCOVER_SIDEBAR_ITEM,
+    ...ROOT_SIDEBAR_ITEMS.slice(2)
+  ];
+}
+
+const sidebarAvatarCatalogPromises = new Map();
 
 function profileInitial(name) {
   const raw = String(name || "").trim();
@@ -80,7 +102,12 @@ function itemLabel(item) {
 }
 
 function syncSidebarStateClasses(container) {
-  const root = container?.closest?.(".home-shell, .settings-shell, .library-shell") || container;
+  const rootSelector = ".home-shell, .settings-shell, .library-shell";
+  const root =
+    (container?.matches?.(rootSelector) && container) ||
+    container?.closest?.(rootSelector) ||
+    container?.querySelector?.(rootSelector) ||
+    container;
   if (!root?.classList) {
     return;
   }
@@ -94,7 +121,10 @@ function syncSidebarStateClasses(container) {
   );
   root.classList.toggle(
     "has-expanded-sidebar",
-    Boolean(legacySidebar?.classList?.contains("expanded") || modernSidebar?.classList?.contains("expanded"))
+    Boolean(
+      legacySidebar?.classList?.contains("expanded") ||
+      modernSidebar?.classList?.contains("expanded")
+    )
   );
 }
 
@@ -192,13 +222,18 @@ function scheduleRootSidebarTextFit(container) {
 
 function getSelectedItem(routeName = "") {
   return (
-    ROOT_SIDEBAR_ITEMS.find((item) => item.route === String(routeName || "")) ||
-    ROOT_SIDEBAR_ITEMS[0]
+    [...ROOT_SIDEBAR_ITEMS, DISCOVER_SIDEBAR_ITEM].find(
+      (item) => item.route === String(routeName || "")
+    ) || ROOT_SIDEBAR_ITEMS[0]
   );
 }
 
 function getItemForAction(action = "") {
-  return ROOT_SIDEBAR_ITEMS.find((item) => item.action === String(action || "")) || null;
+  return (
+    [...ROOT_SIDEBAR_ITEMS, DISCOVER_SIDEBAR_ITEM].find(
+      (item) => item.action === String(action || "")
+    ) || null
+  );
 }
 
 function getModernSidebarPresentation(selectedRoute = "") {
@@ -211,21 +246,30 @@ function getModernSidebarPresentation(selectedRoute = "") {
   };
 }
 
-function getSidebarAvatarCatalog() {
-  if (!sidebarAvatarCatalogPromise) {
-    sidebarAvatarCatalogPromise = AvatarRepository.getAvatarCatalog().catch(() => {
-      sidebarAvatarCatalogPromise = null;
-      return [];
-    });
+function getSidebarAvatarCatalog(hasMemberAccess = false) {
+  const cacheKey = hasMemberAccess ? "member" : "standard";
+  if (!sidebarAvatarCatalogPromises.has(cacheKey)) {
+    sidebarAvatarCatalogPromises.set(
+      cacheKey,
+      AvatarRepository.getAvatarCatalog(hasMemberAccess).catch(() => {
+        sidebarAvatarCatalogPromises.delete(cacheKey);
+        return [];
+      })
+    );
   }
-  return sidebarAvatarCatalogPromise;
+  return sidebarAvatarCatalogPromises.get(cacheKey);
 }
 
 export async function getSidebarProfileState() {
   const activeProfileId = String(ProfileManager.getActiveProfileId() || "");
+  const memberAccess = await MemberAccessRepository.getAccess().catch(() => null);
+  const hasMemberAvatarAccess = MemberAccessRepository.hasEntitlement(
+    memberAccess,
+    "PROFILE_AVATARS"
+  );
   const [profiles, avatarCatalog] = await Promise.all([
     ProfileManager.getProfiles(),
-    getSidebarAvatarCatalog()
+    getSidebarAvatarCatalog(hasMemberAvatarAccess)
   ]);
   const activeProfile =
     profiles.find(
@@ -258,7 +302,10 @@ export function activateLegacySidebarAction(action, currentRoute = "") {
     return;
   }
 
-  const target = getItemForAction(normalizedAction);
+  const target =
+    normalizedAction === "gotoDiscover"
+      ? DISCOVER_SIDEBAR_ITEM
+      : getItemForAction(normalizedAction);
   if (!target) {
     return;
   }
@@ -276,13 +323,14 @@ export function isSelectedSidebarAction(action, selectedRoute = "") {
 }
 
 export function renderLegacySidebar({ selectedRoute = "home", profile = null, layout = {} } = {}) {
+  const items = sidebarItems(layout);
   const selectedItem = getSelectedItem(selectedRoute);
   const profileState = profile || {};
   const showProfileSelector = Boolean(
     profileState.showProfileSelector && profileState.activeProfileName
   );
   const collapsible = Boolean(layout?.collapseSidebar);
-  const performanceConstrained = Platform.isWebOS() || Platform.isTizen();
+  const performanceConstrained = getTvRuntimePerformanceProfile().isPerformanceConstrained;
 
   return `
     <aside class="home-sidebar root-sidebar root-sidebar-legacy${performanceConstrained ? " performance-constrained" : ""}"
@@ -309,8 +357,9 @@ export function renderLegacySidebar({ selectedRoute = "home", profile = null, la
           : ""
       }
       <div class="home-nav-list">
-        ${ROOT_SIDEBAR_ITEMS.map(
-          (item, index) => `
+        ${items
+          .map(
+            (item, index) => `
           <button class="home-nav-item focusable${selectedItem.action === item.action ? " selected" : ""}"
                   data-nav-zone="sidebar"
                   data-nav-index="${showProfileSelector ? index + 1 : index}"
@@ -320,7 +369,8 @@ export function renderLegacySidebar({ selectedRoute = "home", profile = null, la
             <span class="home-nav-label">${itemLabel(item)}</span>
           </button>
         `
-        ).join("")}
+          )
+          .join("")}
       </div>
     </aside>
   `;
@@ -331,8 +381,10 @@ export function renderModernSidebar({
   profile = null,
   expanded = false,
   pillIconOnly = false,
-  blurEnabled = false
+  blurEnabled = false,
+  layout = {}
 } = {}) {
+  const items = sidebarItems(layout);
   const selectedItem = getSelectedItem(selectedRoute);
   const profileState = profile || {};
   const showProfileSelector = Boolean(
@@ -341,7 +393,7 @@ export function renderModernSidebar({
   const { keepPillExpanded } = getModernSidebarPresentation(selectedRoute);
   const showPill = selectedItem.route !== "search";
   const selectedLabel = itemLabel(selectedItem);
-  const performanceConstrained = Platform.isWebOS() || Platform.isTizen();
+  const performanceConstrained = getTvRuntimePerformanceProfile().isPerformanceConstrained;
 
   return `
     <div class="modern-sidebar-shell${expanded ? " expanded panel-visible" : ""}${blurEnabled ? " blur-enabled" : ""}${keepPillExpanded ? " keep-pill-expanded" : ""}${performanceConstrained ? " performance-constrained" : ""}" data-selected-route="${selectedRoute}">
@@ -383,8 +435,9 @@ export function renderModernSidebar({
             : ""
         }
         <div class="modern-sidebar-nav-list">
-          ${ROOT_SIDEBAR_ITEMS.map(
-            (item, index) => `
+          ${items
+            .map(
+              (item, index) => `
             <button class="modern-sidebar-nav-item focusable${selectedItem.action === item.action ? " selected" : ""}"
                     data-nav-zone="sidebar"
                     data-nav-index="${(showPill ? 1 : 0) + (showProfileSelector ? 1 : 0) + index}"
@@ -396,7 +449,8 @@ export function renderModernSidebar({
               <span class="modern-sidebar-nav-label">${itemLabel(item)}</span>
             </button>
           `
-          ).join("")}
+            )
+            .join("")}
         </div>
       </aside>
     </div>
@@ -422,7 +476,8 @@ export function renderRootSidebar({
       profile,
       expanded,
       pillIconOnly,
-      blurEnabled: Boolean(layout?.modernSidebarBlur) && isModernSidebarBlurAvailable()
+      blurEnabled: Boolean(layout?.modernSidebarBlur) && isModernSidebarBlurAvailable(),
+      layout
     });
   }
   return renderLegacySidebar({ selectedRoute, profile, layout });

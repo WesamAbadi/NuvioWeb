@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="hero_play">播放</string>
+    <string name="play_manually">手動播放</string>
+    <string name="hero_synopsis_read_more">閱讀更多</string>
+    <string name="hero_synopsis_dismiss_hint">按返回鍵關閉</string>
+    <string name="player_post_play_play_manually">手動播放</string>
+    <string name="player_post_play_manual_subtitle">播放</string>
+</resources>

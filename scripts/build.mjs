@@ -95,14 +95,18 @@ function toLegacyLengthValue(value) {
 
   while (changed) {
     changed = false;
-    result = result.replace(/\b(min|max|clamp)\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g, (match, fn, argsText) => {
-      const args = splitFunctionArgs(argsText).map(toLegacyLengthValue);
-      const computed = computeLegacyMathValue(fn, args);
-      const replacement =
-        computed || (fn === "clamp" ? args[2] || args[1] || args[0] : chooseStaticMathFallback(fn, args));
-      changed = true;
-      return replacement || match;
-    });
+    result = result.replace(
+      /\b(min|max|clamp)\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g,
+      (match, fn, argsText) => {
+        const args = splitFunctionArgs(argsText).map(toLegacyLengthValue);
+        const computed = computeLegacyMathValue(fn, args);
+        const replacement =
+          computed ||
+          (fn === "clamp" ? args[2] || args[1] || args[0] : chooseStaticMathFallback(fn, args));
+        changed = true;
+        return replacement || match;
+      }
+    );
   }
 
   return result;
@@ -138,7 +142,9 @@ function parseLengthToPx(value) {
 
 function formatPx(value) {
   const rounded = Math.round(value * 1000) / 1000;
-  return `${String(rounded).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1")}px`;
+  return `${String(rounded)
+    .replace(/\.0+$/, "")
+    .replace(/(\.\d*?)0+$/, "$1")}px`;
 }
 
 function computeLegacyMathValue(fn, args) {
@@ -246,7 +252,12 @@ function legacyDeclarationFallbackPlugin() {
       const legacyValue = toLegacyColorValue(toLegacyLengthValue(decl.value));
       if (legacyValue && legacyValue !== decl.value) {
         const previous = decl.prev();
-        if (!previous || previous.type !== "decl" || previous.prop !== decl.prop || previous.value !== legacyValue) {
+        if (
+          !previous ||
+          previous.type !== "decl" ||
+          previous.prop !== decl.prop ||
+          previous.value !== legacyValue
+        ) {
           decl.cloneBefore({ value: legacyValue });
         }
       }
@@ -283,7 +294,10 @@ function flexGapFallbackPlugin() {
   return {
     postcssPlugin: "nuvio-flex-gap-fallback",
     Rule(rule) {
-      if (!rule.selector || rule.parent?.type === "atrule" && /keyframes$/i.test(rule.parent.name)) {
+      if (
+        !rule.selector ||
+        (rule.parent?.type === "atrule" && /keyframes$/i.test(rule.parent.name))
+      ) {
         return;
       }
 
@@ -451,6 +465,57 @@ async function buildCoreJsBundle() {
   });
 }
 
+async function buildAssSubtitleLibrary() {
+  await build({
+    entryPoints: [path.join(rootDir, "node_modules", "assjs", "dist", "ass.global.min.js")],
+    outfile: path.join(distDir, "assets", "libs", "ass.min.js"),
+    minify: !debugBundle,
+    target: [`chrome${compatibilityPolicy.chromiumVersion}`],
+    legalComments: "none"
+  });
+}
+
+async function buildPluginRuntimeAssets() {
+  console.log("building isolated JavaScript plugin runtime...");
+  await mkdir(path.join(distDir, "assets", "libs"), { recursive: true });
+  await mkdir(path.join(distDir, "assets", "runtime"), { recursive: true });
+  const cryptoJsSource = await readFile(
+    path.join(rootDir, "node_modules", "crypto-js", "crypto-js.js"),
+    "utf8"
+  );
+  await build({
+    entryPoints: [
+      path.join(rootDir, "node_modules", "quickjs-emscripten", "dist", "index.global.js")
+    ],
+    outfile: path.join(distDir, "assets", "libs", "quickjs-emscripten.global.js"),
+    bundle: false,
+    target: [`chrome${compatibilityPolicy.chromiumVersion}`],
+    minify: !debugBundle,
+    legalComments: "none"
+  });
+  await build({
+    entryPoints: [path.join(rootDir, "js", "core", "player", "pluginWorker.js")],
+    outfile: path.join(distDir, "assets", "runtime", "plugin-worker.js"),
+    bundle: true,
+    platform: "browser",
+    format: "iife",
+    target: [`chrome${compatibilityPolicy.chromiumVersion}`],
+    minify: !debugBundle,
+    legalComments: "none",
+    define: {
+      __NUVIO_CRYPTO_JS_SOURCE__: JSON.stringify(cryptoJsSource)
+    }
+  });
+  await cp(
+    path.join(rootDir, "node_modules", "quickjs-emscripten", "LICENSE"),
+    path.join(distDir, "assets", "libs", "quickjs-emscripten.LICENSE")
+  );
+  await cp(
+    path.join(rootDir, "node_modules", "crypto-js", "LICENSE"),
+    path.join(distDir, "assets", "libs", "crypto-js.LICENSE")
+  );
+}
+
 async function buildBundle() {
   const { version } = await readAppMetadata();
 
@@ -469,7 +534,9 @@ async function buildBundle() {
       __NUVIO_APP_VERSION__: JSON.stringify(version)
     }
   });
-  if (Object.keys(result.metafile.inputs).some((input) => input.includes("node_modules/core-js/"))) {
+  if (
+    Object.keys(result.metafile.inputs).some((input) => input.includes("node_modules/core-js/"))
+  ) {
     throw new Error("Application bundle must not contain core-js modules.");
   }
   console.log("bundle build complete");
@@ -509,8 +576,14 @@ async function runBuild() {
       cp(
         path.join(rootDir, "node_modules", "dashjs", "LICENSE.md"),
         path.join(distDir, "assets", "libs", "dashjs.LICENSE.md")
+      ),
+      cp(
+        path.join(rootDir, "node_modules", "assjs", "LICENSE"),
+        path.join(distDir, "assets", "libs", "assjs.LICENSE")
       )
     ]);
+    await buildAssSubtitleLibrary();
+    await buildPluginRuntimeAssets();
     await cp(
       path.join(rootDir, "node_modules", "libbitsub", "pkg", "libbitsub_bg.wasm"),
       path.join(distDir, "assets", "libs", "libbitsub_bg.wasm")

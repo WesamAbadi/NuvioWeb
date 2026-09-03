@@ -5,41 +5,45 @@ import path from "node:path";
 export const ENV_PROPERTY_KEYS = [
   "NUVIO_SUPABASE_URL",
   "NUVIO_SUPABASE_ANON_KEY",
+  "NUVIO_SUPABASE_FALLBACK_URL",
   "TV_LOGIN_WEB_BASE_URL",
   "YOUTUBE_PROXY_URL",
-  "PARENTAL_GUIDE_API_URL",
   "INTRODB_API_URL",
   "IMDB_RATINGS_API_BASE_URL",
+  "IMDB_TAPFRAME_API_BASE_URL",
   "AVATAR_PUBLIC_BASE_URL",
   "UNIQUE_CONTRIBUTIONS_BASE_URL",
-  "DONATIONS_BASE_URL",
-  "DONATIONS_DONATE_URL",
+  "SUPPORTERS_API_BASE_URL",
+  "SUPPORT_URL",
   "SPONSOR_NAMES",
   "TMDB_API_KEY",
   "TRAKT_CLIENT_ID",
   "TRAKT_CLIENT_SECRET",
-  "TRAKT_API_URL",
-  "TRAKT_REDIRECT_URI"
+  "SIMKL_CLIENT_ID",
+  "SIMKL_APP_NAME",
+  "PREMIUMIZE_CLIENT_ID"
 ];
 
 const DEFAULT_ENV_VALUES = {
   NUVIO_SUPABASE_URL: "",
   NUVIO_SUPABASE_ANON_KEY: "",
+  NUVIO_SUPABASE_FALLBACK_URL: "",
   TV_LOGIN_WEB_BASE_URL: "",
   YOUTUBE_PROXY_URL: "youtube-proxy.html",
-  PARENTAL_GUIDE_API_URL: "",
   INTRODB_API_URL: "https://api.introdb.app/",
   IMDB_RATINGS_API_BASE_URL: "",
+  IMDB_TAPFRAME_API_BASE_URL: "",
   AVATAR_PUBLIC_BASE_URL: "",
   UNIQUE_CONTRIBUTIONS_BASE_URL: "",
-  DONATIONS_BASE_URL: "",
-  DONATIONS_DONATE_URL: "",
+  SUPPORTERS_API_BASE_URL: "https://nuvio.tv/",
+  SUPPORT_URL: "https://nuvio.tv/support",
   SPONSOR_NAMES: "ragmehos.",
   TMDB_API_KEY: "",
   TRAKT_CLIENT_ID: "",
   TRAKT_CLIENT_SECRET: "",
-  TRAKT_API_URL: "https://api.trakt.tv",
-  TRAKT_REDIRECT_URI: "urn:ietf:wg:oauth:2.0:oob"
+  SIMKL_CLIENT_ID: "",
+  SIMKL_APP_NAME: "nuvio",
+  PREMIUMIZE_CLIENT_ID: ""
 };
 
 async function pathExists(filePath) {
@@ -86,9 +90,16 @@ export function parseProperties(source = "") {
 export function normalizeEnvProperties(properties = {}) {
   const env = {};
   ENV_PROPERTY_KEYS.forEach((key) => {
-    const fileVal = Object.prototype.hasOwnProperty.call(properties, key) ? properties[key] : undefined;
+    const fileVal = Object.prototype.hasOwnProperty.call(properties, key)
+      ? properties[key]
+      : undefined;
     const envVal = process.env[key];
-    const rawValue = (fileVal !== undefined && String(fileVal).trim()) ? fileVal : (envVal !== undefined && String(envVal).trim()) ? envVal : DEFAULT_ENV_VALUES[key];
+    const rawValue =
+      fileVal !== undefined && String(fileVal).trim()
+        ? fileVal
+        : envVal !== undefined && String(envVal).trim()
+          ? envVal
+          : DEFAULT_ENV_VALUES[key];
     const normalizedValue = String(rawValue ?? "");
     const shouldUseDefault =
       (key === "INTRODB_API_URL" || key === "SPONSOR_NAMES") && !normalizedValue.trim();

@@ -18,9 +18,8 @@ function installUtf8CodecFallbacks() {
         let written = 0;
         while (read < text.length) {
           const firstUnit = text.charCodeAt(read);
-          const hasSurrogatePair = firstUnit >= 0xd800
-            && firstUnit <= 0xdbff
-            && read + 1 < text.length;
+          const hasSurrogatePair =
+            firstUnit >= 0xd800 && firstUnit <= 0xdbff && read + 1 < text.length;
           const character = text.slice(read, read + (hasSurrogatePair ? 2 : 1));
           const bytes = this.encode(character);
           if (written + bytes.length > destination.length) {
@@ -38,7 +37,9 @@ function installUtf8CodecFallbacks() {
   if (typeof globalThis.TextDecoder !== "function") {
     globalThis.TextDecoder = class TextDecoderFallback {
       decode(value) {
-        const bytes = value ? new Uint8Array(value.buffer || value, value.byteOffset || 0, value.byteLength) : new Uint8Array(0);
+        const bytes = value
+          ? new Uint8Array(value.buffer || value, value.byteOffset || 0, value.byteLength)
+          : new Uint8Array(0);
         let binary = "";
         const chunkSize = 8192;
         for (let offset = 0; offset < bytes.length; offset += chunkSize) {
@@ -56,12 +57,12 @@ function installUtf8CodecFallbacks() {
 
 export function supportsBitmapSubtitleDecoding() {
   if (
-    typeof globalThis.WebAssembly !== "object"
-    || typeof globalThis.Uint8Array !== "function"
-    || typeof globalThis.Uint8ClampedArray !== "function"
-    || typeof globalThis.Promise !== "function"
-    || typeof globalThis.fetch !== "function"
-    || typeof globalThis.document?.createElement !== "function"
+    typeof globalThis.WebAssembly !== "object" ||
+    typeof globalThis.Uint8Array !== "function" ||
+    typeof globalThis.Uint8ClampedArray !== "function" ||
+    typeof globalThis.Promise !== "function" ||
+    typeof globalThis.fetch !== "function" ||
+    typeof globalThis.document?.createElement !== "function"
   ) {
     return false;
   }
@@ -103,19 +104,50 @@ export async function warmBitmapSubtitleDecoder() {
   return true;
 }
 
+export function normalizeBitmapSubtitleFormat(value) {
+  const text = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+  if (/\bVOB[ /-]*SUB\b|\bDVD[ /-]*SUB(?:TITLE)?\b/.test(text)) {
+    return "vobsub";
+  }
+  if (/\b(?:HDMV[ /-]*)?PGS\b|\bPRESENTATION GRAPHIC STREAM\b/.test(text)) {
+    return "pgs";
+  }
+  return null;
+}
+
 export class BitmapSubtitleDecoder {
   constructor() {
     this.parser = null;
+    this.format = null;
   }
 
-  async load(idxContent, subData) {
+  async load(options, legacyData) {
     this.dispose();
+    const request =
+      options && typeof options === "object" && !(options instanceof Uint8Array)
+        ? options
+        : { format: "vobsub", idxContent: options, data: legacyData };
+    const format = normalizeBitmapSubtitleFormat(request.format);
+    const data = request.data;
+    if ((format !== "vobsub" && format !== "pgs") || !(data instanceof Uint8Array)) {
+      throw new Error("Invalid bitmap subtitle decoder input");
+    }
     const module = await loadDecoderModule();
-    const parser = new module.VobSubParser();
+    const parser = format === "pgs" ? new module.PgsParser() : new module.VobSubParser();
     try {
-      parser.loadFromData(String(idxContent || ""), subData);
+      if (format === "pgs") {
+        parser.parse(data);
+      } else {
+        parser.loadFromData(String(request.idxContent || ""), data);
+      }
       this.parser = parser;
+      this.format = format;
     } catch (error) {
+      parser.dispose?.();
       parser.free?.();
       throw error;
     }
@@ -139,20 +171,63 @@ export class BitmapSubtitleDecoder {
     }
     const frame = parser.renderAtIndex(index);
     if (!frame) {
+      if (this.format === "pgs" && parser.getCueCompositionCount(index) === 0) {
+        return {
+          key: `pgs:${index}:${startMs}:${endMs}`,
+          startMs,
+          endMs,
+          screenWidth: parser.screenWidth,
+          screenHeight: parser.screenHeight,
+          compositions: []
+        };
+      }
       return null;
     }
     try {
+      if (this.format === "pgs") {
+        const compositions = [];
+        const compositionCount = Math.max(0, Number(frame.compositionCount) || 0);
+        for (let compositionIndex = 0; compositionIndex < compositionCount; compositionIndex += 1) {
+          const composition = frame.getComposition(compositionIndex);
+          if (!composition) {
+            continue;
+          }
+          try {
+            compositions.push({
+              x: composition.x,
+              y: composition.y,
+              width: composition.width,
+              height: composition.height,
+              rgba: new Uint8ClampedArray(composition.getRgba())
+            });
+          } finally {
+            composition.free?.();
+          }
+        }
+        return {
+          key: `pgs:${index}:${startMs}:${endMs}`,
+          startMs,
+          endMs,
+          screenWidth: parser.screenWidth || frame.width,
+          screenHeight: parser.screenHeight || frame.height,
+          compositions
+        };
+      }
       return {
-        key: `${index}:${startMs}:${endMs}`,
+        key: `vobsub:${index}:${startMs}:${endMs}`,
         startMs,
         endMs,
-        x: frame.x,
-        y: frame.y,
-        width: frame.width,
-        height: frame.height,
         screenWidth: frame.screenWidth,
         screenHeight: frame.screenHeight,
-        rgba: new Uint8ClampedArray(frame.getRgba())
+        compositions: [
+          {
+            x: frame.x,
+            y: frame.y,
+            width: frame.width,
+            height: frame.height,
+            rgba: new Uint8ClampedArray(frame.getRgba())
+          }
+        ]
       };
     } finally {
       frame.free?.();
@@ -170,5 +245,6 @@ export class BitmapSubtitleDecoder {
       // Best effort cleanup for WASM-owned memory.
     }
     this.parser = null;
+    this.format = null;
   }
 }

@@ -18,7 +18,11 @@ if (typeof window !== "undefined") {
     try {
       const origCreateMediaElementSource = AudioContextCtor.prototype.createMediaElementSource;
       AudioContextCtor.prototype.createMediaElementSource = function (element) {
-        if (element instanceof HTMLMediaElement || element?.tagName === "VIDEO" || element?.tagName === "AUDIO") {
+        if (
+          element instanceof HTMLMediaElement ||
+          element?.tagName === "VIDEO" ||
+          element?.tagName === "AUDIO"
+        ) {
           return this.createGain();
         }
         return origCreateMediaElementSource.call(this, element);
@@ -187,8 +191,11 @@ function monitorAudioDecoding() {
       if (typeof video.webkitAudioDecodedByteCount === "number") {
         if (video.webkitAudioDecodedByteCount === 0 && lastWarnedVideoSrc !== currentSrc) {
           lastWarnedVideoSrc = currentSrc;
-          console.warn("[AUDIO DETECT] Unsupported audio codec! webkitAudioDecodedByteCount === 0 for stream:", currentSrc);
-          
+          console.warn(
+            "[AUDIO DETECT] Unsupported audio codec! webkitAudioDecodedByteCount === 0 for stream:",
+            currentSrc
+          );
+
           if (typeof playerScreen.showAspectToast === "function") {
             playerScreen.showAspectToast("Audio: AC3 / DTS (Unsupported)", 8000);
           }
@@ -267,20 +274,22 @@ function findFocusableTarget(node) {
   if (!node || !(node instanceof Element)) return null;
 
   if (hasActiveModal()) {
-    const modalContainer = node.closest(".nuvio-dialog-backdrop, .profile-pin-overlay, .nuvio-dialog-frame");
+    const modalContainer = node.closest(
+      ".nuvio-dialog-backdrop, .profile-pin-overlay, .nuvio-dialog-frame"
+    );
     if (!modalContainer) {
       return null;
     }
   }
 
   const focusable = node.closest(
-    '.focusable, button, a, input, textarea, select, [data-action], [tabindex], ' +
-    '.home-content-card, .meta-cast-card, .catalog-card, .stream-card, ' +
-    '.episode-card, .player-control-btn, .player-control-button, .player-action-btn, ' +
-    '.player-progress-shell, .player-header-back-btn, .player-back-btn, ' +
-    '.player-dialog-item, .player-sources-item, [data-sources-zone], [data-subtitle-rail], ' +
-    '[data-audio-column], [data-speed-index], [data-episode-stream-index], ' +
-    '.sidebar-item, .settings-item, .profile-card, .nuvio-dialog-btn, .tab-item, [role="button"]'
+    ".focusable, button, a, input, textarea, select, [data-action], [tabindex], " +
+      ".home-content-card, .meta-cast-card, .catalog-card, .stream-card, " +
+      ".episode-card, .player-control-btn, .player-control-button, .player-action-btn, " +
+      ".player-progress-shell, .player-header-back-btn, .player-back-btn, " +
+      ".player-dialog-item, .player-sources-item, [data-sources-zone], [data-subtitle-rail], " +
+      "[data-audio-column], [data-speed-index], [data-episode-stream-index], " +
+      '.sidebar-item, .settings-item, .profile-card, .nuvio-dialog-btn, .tab-item, [role="button"]'
   );
 
   if (focusable && focusable instanceof HTMLElement) {
@@ -385,7 +394,10 @@ function triggerFallbackActivation(target, currentScreen, event) {
 function triggerProfileOptionsDialog(profileCard) {
   if (!profileCard) return false;
   const currentScreen = Router.getCurrentScreen();
-  if (currentScreen?.name === "profile-selection" || typeof currentScreen?.openOptionsDialog === "function") {
+  if (
+    currentScreen?.name === "profile-selection" ||
+    typeof currentScreen?.openOptionsDialog === "function"
+  ) {
     const profileId = profileCard.dataset?.profileId || profileCard.getAttribute("data-profile-id");
     const profile = currentScreen.getProfileById?.(profileId);
     if (profile) {
@@ -462,7 +474,9 @@ function handlePointerClick(event) {
   if (!(rawTarget instanceof Element)) return;
 
   if (hasActiveModal()) {
-    const modal = rawTarget.closest(".nuvio-dialog-backdrop, .profile-pin-overlay, .nuvio-dialog-frame");
+    const modal = rawTarget.closest(
+      ".nuvio-dialog-backdrop, .profile-pin-overlay, .nuvio-dialog-frame"
+    );
     if (!modal) {
       event.preventDefault();
       event.stopPropagation();
@@ -485,14 +499,17 @@ function handlePointerClick(event) {
     const isControlClick = Boolean(
       rawTarget.closest(
         ".player-control-btn, .player-control-button, .player-action-btn, .player-progress-shell, " +
-        ".player-dialog, .player-subtitle-dialog, .player-audio-dialog, .player-sources-panel, .player-sources-drawer, " +
-        ".player-episode-panel, .player-dialog-item, .player-sources-item, [data-sources-zone], [data-subtitle-rail], " +
-        "[data-audio-column], [data-speed-index], [data-episode-action], [data-episode-stream-index], " +
-        ".focusable, button, [data-player-pointer-action], .player-control-bar"
+          ".player-dialog, .player-subtitle-dialog, .player-audio-dialog, .player-sources-panel, .player-sources-drawer, " +
+          ".player-episode-panel, .player-dialog-item, .player-sources-item, [data-sources-zone], [data-subtitle-rail], " +
+          "[data-audio-column], [data-speed-index], [data-episode-action], [data-episode-stream-index], " +
+          ".focusable, button, [data-player-pointer-action], .player-control-bar"
       )
     );
 
-    if (!isControlClick && rawTarget.closest("#player, .player-screen, #videoPlayer, video, .player-video-container")) {
+    if (
+      !isControlClick &&
+      rawTarget.closest("#player, .player-screen, #videoPlayer, video, .player-video-container")
+    ) {
       event.preventDefault();
       event.stopPropagation();
       if (playerScreen.pauseOverlayVisible) {
@@ -526,7 +543,8 @@ function handlePointerClick(event) {
     return;
   }
 
-  const hasNativeClick = target.tagName === "BUTTON" || target.tagName === "A" || typeof target.onclick === "function";
+  const hasNativeClick =
+    target.tagName === "BUTTON" || target.tagName === "A" || typeof target.onclick === "function";
 
   if (typeof currentScreen?.onPointerActivate === "function") {
     Promise.resolve(currentScreen.onPointerActivate(target, event))
@@ -586,7 +604,9 @@ function handlePointerMove(event) {
       }
     }, 2500);
 
-    const progressShell = event.target?.closest?.(".player-progress-shell") || document.querySelector(".player-progress-shell");
+    const progressShell =
+      event.target?.closest?.(".player-progress-shell") ||
+      document.querySelector(".player-progress-shell");
 
     if (isScrubbing && progressShell) {
       event.preventDefault();
@@ -676,13 +696,18 @@ function handleKeyDown(event) {
       return;
     }
 
-    if ((key === "ArrowLeft" || key === "ArrowRight" || keyCode === 37 || keyCode === 39) && !isEditableTarget(target)) {
-      const activeDropdown = document.querySelector(".player-dialog, .subtitle-dialog, .audio-dialog");
+    if (
+      (key === "ArrowLeft" || key === "ArrowRight" || keyCode === 37 || keyCode === 39) &&
+      !isEditableTarget(target)
+    ) {
+      const activeDropdown = document.querySelector(
+        ".player-dialog, .subtitle-dialog, .audio-dialog"
+      );
       if (!activeDropdown) {
         event.preventDefault();
         event.stopPropagation();
         const currentPos = Number(playerScreen.getCurrentPlaybackSeconds?.() || 0);
-        const delta = (key === "ArrowLeft" || keyCode === 37) ? -10 : 10;
+        const delta = key === "ArrowLeft" || keyCode === 37 ? -10 : 10;
         playerScreen.seekPlaybackSeconds?.(Math.max(0, currentPos + delta));
         playerScreen.setControlsVisible?.(true, { focus: false });
         playerScreen.renderControlButtons?.();
@@ -751,8 +776,8 @@ function handleWheel(event) {
   if (!(target instanceof Element)) return;
 
   const row = target.closest(
-    '.home-row-cards, .catalog-cards-row, .collection-items-row, ' +
-    '.meta-cast-row, [data-scroll-row], .horizontal-scroll'
+    ".home-row-cards, .catalog-cards-row, .collection-items-row, " +
+      ".meta-cast-row, [data-scroll-row], .horizontal-scroll"
   );
 
   if (row) {
@@ -763,8 +788,8 @@ function handleWheel(event) {
   }
 
   const container = target.closest(
-    '.screen, .home-main, .meta-details-content, .settings-container, ' +
-    '.catalog-grid, .nuvio-dialog-body, .sidebar-container'
+    ".screen, .home-main, .meta-details-content, .settings-container, " +
+      ".catalog-grid, .nuvio-dialog-body, .sidebar-container"
   );
 
   if (container) {
@@ -800,15 +825,23 @@ export function initWebInputAdapter() {
   window.addEventListener("dblclick", handleDoubleClick, true);
   window.addEventListener("wheel", handleWheel, { passive: false, capture: true });
 
-  document.addEventListener("mouseout", (event) => {
-    if (event.target && event.relatedTarget) {
-      const fromSidebar = event.target.closest?.(".home-sidebar, .modern-sidebar-shell, .modern-sidebar-panel");
-      const toSidebar = event.relatedTarget.closest?.(".home-sidebar, .modern-sidebar-shell, .modern-sidebar-panel");
-      if (fromSidebar && !toSidebar) {
-        handleMouseLeaveSidebar(event);
+  document.addEventListener(
+    "mouseout",
+    (event) => {
+      if (event.target && event.relatedTarget) {
+        const fromSidebar = event.target.closest?.(
+          ".home-sidebar, .modern-sidebar-shell, .modern-sidebar-panel"
+        );
+        const toSidebar = event.relatedTarget.closest?.(
+          ".home-sidebar, .modern-sidebar-shell, .modern-sidebar-panel"
+        );
+        if (fromSidebar && !toSidebar) {
+          handleMouseLeaveSidebar(event);
+        }
       }
-    }
-  }, true);
+    },
+    true
+  );
 }
 
 if (typeof document !== "undefined") {

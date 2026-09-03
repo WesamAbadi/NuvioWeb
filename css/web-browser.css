@@ -95,7 +95,9 @@ body.platform-browser.player-cursor-hidden * {
 .platform-browser [data-player-pointer-action] {
   cursor: pointer !important;
   pointer-events: auto !important;
-  transition: background-color 0.15s ease, opacity 0.15s ease !important;
+  transition:
+    background-color 0.15s ease,
+    opacity 0.15s ease !important;
 }
 
 .platform-browser .player-control-btn:hover:not(.disabled):not(:disabled),
@@ -130,7 +132,9 @@ body.platform-browser.player-cursor-hidden * {
   border-radius: 3px !important;
   background: rgba(255, 255, 255, 0.25) !important;
   position: relative !important;
-  transition: height 0.1s ease, background 0.1s ease !important;
+  transition:
+    height 0.1s ease,
+    background 0.1s ease !important;
 }
 
 .platform-browser .player-progress-shell:hover .player-progress-track,
@@ -142,7 +146,7 @@ body.platform-browser.player-cursor-hidden * {
 /* Disable width transition on browser progress fill to eliminate lagging & width flickering */
 .platform-browser .player-progress-fill {
   transition: none !important;
-  background: var(--theme-accent, #1E88E5) !important;
+  background: var(--theme-accent, #1e88e5) !important;
   height: 100% !important;
   border-radius: 3px !important;
 }

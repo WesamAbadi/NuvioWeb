@@ -1,4 +1,5 @@
 import { AuthManager } from "../../core/auth/authManager.js";
+import { toTraktImageUrl } from "../../core/trakt/traktImageUrl.js";
 import { SavedLibrarySyncService } from "../../core/profile/savedLibrarySyncService.js";
 import { ProfileManager } from "../../core/profile/profileManager.js";
 import { LocalStore } from "../../core/storage/localStore.js";
@@ -6,10 +7,13 @@ import { savedLibraryRepository } from "./savedLibraryRepository.js";
 import { metaRepository } from "./metaRepository.js";
 import { requestJson, TraktAuthService } from "./traktAuthService.js";
 import { TraktLibrarySourceMode, TraktSettingsStore } from "../local/traktSettingsStore.js";
+import { SimklAuthService } from "./simklAuthService.js";
+import { SimklSyncService } from "./simklSyncService.js";
 
 export const LibrarySourceMode = {
   LOCAL: "local",
-  TRAKT: "trakt"
+  TRAKT: "trakt",
+  SIMKL: "simkl"
 };
 
 export const LibrarySortOptionKey = {
@@ -34,6 +38,7 @@ export const LibraryListType = {
 
 const REMOTE_STORE_KEY = "libraryTraktState";
 const WATCHLIST_KEY = "watchlist";
+const SIMKL_DEFAULT_LIST_KEY = "simkl:status:plantowatch";
 const PERSONAL_KEY_PREFIX = "personal:";
 const TRAKT_PAGE_LIMIT = 100;
 const TRAKT_LIST_FETCH_CONCURRENCY = 3;
@@ -129,7 +134,7 @@ async function resolveRemoteStoreKey() {
   if (AuthManager.isAuthenticated) {
     try {
       ownerId = String(await AuthManager.getEffectiveUserId());
-    } catch (error) {
+    } catch {
       ownerId = "guest";
     }
   }
@@ -523,14 +528,15 @@ function toPersonalList(raw = {}) {
 
 function bestTraktImage(images = {}, kind) {
   const candidates = images?.[kind];
+  let url = null;
   if (Array.isArray(candidates)) {
-    return candidates.find((entry) => typeof entry === "string") || null;
+    url = candidates.find((entry) => typeof entry === "string") || null;
+  } else if (typeof candidates === "string") {
+    url = candidates;
+  } else if (candidates && typeof candidates === "object") {
+    url = candidates.full || candidates.medium || candidates.thumb || null;
   }
-  if (typeof candidates === "string") return candidates;
-  if (candidates && typeof candidates === "object") {
-    return candidates.full || candidates.medium || candidates.thumb || null;
-  }
-  return null;
+  return url ? toTraktImageUrl(url) : null;
 }
 
 function toSavedItemFromTraktList(entry) {
@@ -685,6 +691,9 @@ class LibraryRepository {
 
   async getSourceMode() {
     const selectedMode = TraktSettingsStore.get().librarySourceMode;
+    if (selectedMode === TraktLibrarySourceMode.SIMKL) {
+      return SimklAuthService.isAuthenticated() ? LibrarySourceMode.SIMKL : LibrarySourceMode.LOCAL;
+    }
     if (selectedMode !== TraktLibrarySourceMode.TRAKT) {
       return LibrarySourceMode.LOCAL;
     }
@@ -699,6 +708,9 @@ class LibraryRepository {
     const resolvedSourceMode = sourceMode || (await this.getSourceMode());
     if (resolvedSourceMode === LibrarySourceMode.LOCAL) {
       return [];
+    }
+    if (resolvedSourceMode === LibrarySourceMode.SIMKL) {
+      return SimklSyncService.getLibraryTabs();
     }
     await this.ensureFreshTraktState();
     const personalTabs = await getRemotePersonalTabs();
@@ -723,6 +735,10 @@ class LibraryRepository {
     if (resolvedSourceMode === LibrarySourceMode.TRAKT) {
       await this.ensureFreshTraktState();
     }
+    if (resolvedSourceMode === LibrarySourceMode.SIMKL) {
+      const entries = await SimklSyncService.getLibraryEntries();
+      return hydrate ? hydrateEntries(entries) : entries;
+    }
     return resolvedSourceMode === LibrarySourceMode.TRAKT
       ? getRemoteEntries({ hydrate })
       : getLocalEntries({ hydrate });
@@ -732,18 +748,72 @@ class LibraryRepository {
     return hydrateEntries(items, options);
   }
 
-  async getMembershipSnapshot(item) {
-    const sourceMode = await this.getSourceMode();
-    if (sourceMode === LibrarySourceMode.LOCAL) {
+  async getMembershipSnapshot(item, { sourceMode = null } = {}) {
+    const resolvedSourceMode = sourceMode || (await this.getSourceMode());
+    if (resolvedSourceMode === LibrarySourceMode.LOCAL) {
       const exists = await savedLibraryRepository.isSaved(item.itemId || item.id || "");
       return { listMembership: { local: exists } };
     }
-    const [entries, listTabs] = await Promise.all([this.getItems(), this.getListTabs()]);
+    if (resolvedSourceMode === LibrarySourceMode.SIMKL) {
+      return SimklSyncService.getMembershipSnapshot(item);
+    }
+    const [entries, listTabs] = await Promise.all([
+      this.getItems({ sourceMode: resolvedSourceMode }),
+      this.getListTabs({ sourceMode: resolvedSourceMode })
+    ]);
     return membershipMapFromEntries(entries, listTabs)(item);
   }
 
-  async applyMembershipChanges(item, changes) {
+  async toggleDefault(item, options = {}) {
     const sourceMode = await this.getSourceMode();
+    const snapshot = await this.getMembershipSnapshot(item, { sourceMode });
+    const currentMembership = snapshot?.listMembership || {};
+    let desiredMembership;
+
+    if (sourceMode === LibrarySourceMode.TRAKT) {
+      desiredMembership = {
+        ...currentMembership,
+        [WATCHLIST_KEY]: currentMembership[WATCHLIST_KEY] !== true
+      };
+    } else if (sourceMode === LibrarySourceMode.SIMKL) {
+      const hasMembership = Object.values(currentMembership).some(Boolean);
+      desiredMembership = Object.fromEntries(
+        Object.keys(currentMembership).map((key) => [
+          key,
+          !hasMembership && key === SIMKL_DEFAULT_LIST_KEY
+        ])
+      );
+      if (!Object.keys(desiredMembership).length && !hasMembership) {
+        desiredMembership = { [SIMKL_DEFAULT_LIST_KEY]: true };
+      }
+    } else {
+      desiredMembership = { local: currentMembership.local !== true };
+    }
+
+    try {
+      await this.applyMembershipChanges(item, { desiredMembership }, { ...options, sourceMode });
+    } catch (error) {
+      if (error?.code === "SIMKL_DESTRUCTIVE_REMOVAL_REQUIRED") {
+        return {
+          sourceMode,
+          desiredMembership,
+          isSavedInLibrary: true,
+          requiresRemovalConfirmation: true
+        };
+      }
+      throw error;
+    }
+
+    return {
+      sourceMode,
+      desiredMembership,
+      isSavedInLibrary: Object.values(desiredMembership).some(Boolean),
+      requiresRemovalConfirmation: false
+    };
+  }
+
+  async applyMembershipChanges(item, changes, options = {}) {
+    const sourceMode = options?.sourceMode || (await this.getSourceMode());
     if (sourceMode === LibrarySourceMode.LOCAL) {
       const shouldSave = Object.values(changes?.desiredMembership || {}).some(Boolean);
       if (shouldSave) {
@@ -753,9 +823,13 @@ class LibraryRepository {
       }
       return;
     }
+    if (sourceMode === LibrarySourceMode.SIMKL) {
+      await SimklSyncService.applyMembershipChanges(item, changes, options);
+      return;
+    }
 
     const desiredMembership = changes?.desiredMembership || {};
-    const currentSnapshot = await this.getMembershipSnapshot(item);
+    const currentSnapshot = await this.getMembershipSnapshot(item, { sourceMode });
     let remoteState = await readRemoteState();
 
     for (const [listKey, desired] of Object.entries(desiredMembership)) {
@@ -935,6 +1009,14 @@ class LibraryRepository {
         return true;
       } catch (error) {
         console.warn("[LIB] Trakt library fetch failed", error);
+        return false;
+      }
+    }
+    if (sourceMode === LibrarySourceMode.SIMKL) {
+      try {
+        return await SimklSyncService.refresh({ force: true });
+      } catch (error) {
+        console.warn("[LIB] Simkl library fetch failed", error);
         return false;
       }
     }

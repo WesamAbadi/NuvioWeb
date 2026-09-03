@@ -4,16 +4,24 @@
 var SERVICE_TAG = "[Nuvio Tizen EngineFS]";
 var started = false;
 
-function log() {
-  var args = Array.prototype.slice.call(arguments);
-  args.unshift(SERVICE_TAG);
-  console.log.apply(console, args);
-}
-
 function warn() {
   var args = Array.prototype.slice.call(arguments);
   args.unshift(SERVICE_TAG);
   console.warn.apply(console, args);
+}
+
+function diagnosticError(error) {
+  var details = {
+    name: error && error.name ? String(error.name) : "Error",
+    message: error && error.message ? String(error.message) : String(error || "Unknown error")
+  };
+  if (error && error.code) details.code = String(error.code);
+  if (error && error.stack) details.stack = String(error.stack).slice(0, 1600);
+  return details;
+}
+
+function diagnostic() {
+  // Diagnostic console output is intentionally disabled in normal builds.
 }
 
 function probeNodeRuntime() {
@@ -30,15 +38,24 @@ function probeNodeRuntime() {
     "buffer"
   ];
   var missing = [];
+  var loaded = [];
   requiredModules.forEach(function (moduleName) {
     try {
       require(moduleName);
+      loaded.push(moduleName);
     } catch (error) {
       missing.push(moduleName + ": " + (error && error.message ? error.message : String(error)));
     }
   });
+  diagnostic("runtime probe", {
+    requiredModules: requiredModules,
+    loadedModules: loaded,
+    missingModules: missing
+  });
   if (missing.length) {
-    throw new Error("Missing Node-compatible modules: " + missing.join("; "));
+    var missingError = new Error("Missing Node-compatible modules: " + missing.join("; "));
+    diagnostic("runtime probe failed", { error: diagnosticError(missingError) });
+    throw missingError;
   }
 
   var http = require("http");
@@ -53,6 +70,11 @@ function probeNodeRuntime() {
   if (typeof dgram.createSocket !== "function") {
     throw new Error("dgram.createSocket is unavailable");
   }
+  diagnostic("runtime probe success", {
+    httpCreateServer: true,
+    netCreateServer: true,
+    dgramCreateSocket: true
+  });
 }
 
 function configureRuntimeEnv() {
@@ -81,21 +103,33 @@ function configureRuntimeEnv() {
   process.env.CASTING_DISABLED = "1";
   process.env.LOCAL_ADDON_DISABLED = "1";
   process.env.NO_NETWORK_INTERFACES = process.env.NO_NETWORK_INTERFACES || "";
+  diagnostic("runtime environment configured", {
+    port: process.env.PORT,
+    noCors: process.env.NO_CORS,
+    noHttpsServer: process.env.NO_HTTPS_SERVER,
+    hlsV2Disabled: process.env.HLS_V2_DISABLED,
+    castingDisabled: process.env.CASTING_DISABLED,
+    localAddonDisabled: process.env.LOCAL_ADDON_DISABLED
+  });
 }
 
 function startEngineFsRuntime() {
   if (started) {
-    log("start ignored; runtime already requested");
+    diagnostic("start ignored", { reason: "runtime already requested" });
     return;
   }
+  diagnostic("start begin", { runtimeModule: "./runtime/media-http.cjs" });
   probeNodeRuntime();
   configureRuntimeEnv();
   started = true;
-  log("starting local EngineFS runtime", {
-    port: process.env.PORT,
-    expectedBaseUrl: "http://127.0.0.1:" + process.env.PORT
-  });
   require("./runtime/media-http.cjs");
+  diagnostic("EngineFS runtime module loaded", { port: process.env.PORT });
+  // AVPlay can expose text tracks without rendering them. Keep the fallback
+  // extractors beside the existing runtime so Tizen 4+ devices with the
+  // packaged web service can render supported timed text through the app HTML
+  // overlay. Devices that cannot start the service retain native fallback.
+  require("./runtime/tx3g-subtitle-service.cjs").start();
+  diagnostic("subtitle service start requested", { port: process.env.PORT });
 }
 
 function requestRemoveAll() {
@@ -113,15 +147,25 @@ function requestRemoveAll() {
 }
 
 module.exports.onStart = function () {
+  diagnostic("onStart", { service: "EngineFsService" });
   try {
     startEngineFsRuntime();
   } catch (error) {
     started = false;
+    diagnostic("onStart failed", { error: diagnosticError(error) });
     warn("local EngineFS runtime failed to start", error && error.stack ? error.stack : error);
   }
 };
 
-module.exports.onStop = function () {
-  log("stopping local EngineFS runtime");
+function stopEngineFsRuntime() {
+  diagnostic("onExit", { service: "EngineFsService", port: process.env.PORT || "2710" });
+  try {
+    require("./runtime/tx3g-subtitle-service.cjs").stop();
+  } catch (_) {}
   requestRemoveAll();
-};
+}
+
+// onExit is the documented Tizen Web Service lifecycle callback. Keep onStop
+// as a harmless compatibility alias for older service runtimes.
+module.exports.onExit = stopEngineFsRuntime;
+module.exports.onStop = stopEngineFsRuntime;

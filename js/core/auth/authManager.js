@@ -1,6 +1,9 @@
 import { AuthState } from "./authState.js";
+import { clearAccountLocalData } from "./accountLocalDataReset.js";
 import { SessionStore } from "../storage/sessionStore.js";
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../config.js";
+import { SUPABASE_ANON_KEY } from "../../config.js";
+import { fetchSupabaseAuth } from "./supabaseAuthFetch.js";
+import { PluginCodeStore } from "../../data/local/pluginCodeStore.js";
 
 function isJwtLike(token) {
   const value = String(token || "").trim();
@@ -34,18 +37,23 @@ function isJwtExpired(token, leewaySeconds = 30) {
   return exp <= nowSeconds + leewaySeconds;
 }
 
-function isTransientNetworkError(error) {
-  const name = String(error?.name || "").toLowerCase();
-  const message = String(error?.message || error || "").toLowerCase();
-  return (
-    name === "typeerror" ||
-    name === "aborterror" ||
-    message.includes("failed to fetch") ||
-    message.includes("network") ||
-    message.includes("load failed") ||
-    message.includes("internet") ||
-    message.includes("offline")
-  );
+const INVALID_REFRESH_MARKERS = [
+  "invalid refresh token",
+  "refresh token is not valid",
+  "refresh token not found",
+  "refresh_token_not_found",
+  "invalid_grant",
+  "session not found",
+  "session_not_found",
+  "invalid session"
+];
+
+function isInvalidRefreshResponse(status, body) {
+  if (![400, 401, 403].includes(Number(status || 0))) {
+    return false;
+  }
+  const normalizedBody = String(body || "").toLowerCase();
+  return INVALID_REFRESH_MARKERS.some((marker) => normalizedBody.includes(marker));
 }
 
 class AuthManagerClass {
@@ -92,7 +100,11 @@ class AuthManagerClass {
 
     const refreshed = await this.refreshSessionIfNeeded();
     if (!refreshed) {
-      this.setState(AuthState.SIGNED_OUT);
+      if (this.wasLastSessionRefreshTransientFailure() && SessionStore.accessToken) {
+        this.setState(AuthState.AUTHENTICATED);
+      } else if (this.state !== AuthState.SIGNED_OUT) {
+        await this.signOut();
+      }
       return;
     }
 
@@ -119,7 +131,7 @@ class AuthManagerClass {
   // EMAIL LOGIN
   // ------------------------------------
   async signInWithEmail(email, password) {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    const res = await fetchSupabaseAuth("/auth/v1/token?grant_type=password", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -140,10 +152,19 @@ class AuthManagerClass {
   }
 
   async signOut() {
+    const wasSignedOut = this.state === AuthState.SIGNED_OUT;
     SessionStore.clear();
+    try {
+      clearAccountLocalData();
+    } catch (error) {
+      console.warn("Account-local data reset failed during sign out", error);
+    }
+    await PluginCodeStore.clearAll();
     this.cachedEffectiveUserId = null;
     this.cachedEffectiveUserSourceUserId = null;
-    this.setState(AuthState.SIGNED_OUT);
+    if (!wasSignedOut) {
+      this.setState(AuthState.SIGNED_OUT);
+    }
   }
 
   async refreshSessionIfNeeded({ force = false } = {}) {
@@ -164,7 +185,7 @@ class AuthManagerClass {
 
     this.refreshPromise = (async () => {
       try {
-        const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        const res = await fetchSupabaseAuth("/auth/v1/token?grant_type=refresh_token", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -173,13 +194,20 @@ class AuthManagerClass {
           body: JSON.stringify({ refresh_token: refreshToken })
         });
         if (!res.ok) {
-          this.lastRefreshFailureKind = "rejected";
-          return false;
+          const responseBody = await res.text();
+          if (isInvalidRefreshResponse(res.status, responseBody)) {
+            this.lastRefreshFailureKind = "invalid";
+            await this.signOut();
+            return false;
+          }
+
+          this.lastRefreshFailureKind = "transient";
+          return Boolean(accessToken);
         }
         const data = await res.json();
         if (!data?.access_token) {
-          this.lastRefreshFailureKind = "invalid";
-          return false;
+          this.lastRefreshFailureKind = "transient";
+          return Boolean(accessToken);
         }
         SessionStore.accessToken = data.access_token;
         if (data.refresh_token) {
@@ -189,7 +217,7 @@ class AuthManagerClass {
         return true;
       } catch (error) {
         console.warn("Session refresh failed", error);
-        if (isTransientNetworkError(error) && accessToken) {
+        if (accessToken) {
           this.lastRefreshFailureKind = "transient";
           return true;
         }
@@ -208,7 +236,7 @@ class AuthManagerClass {
   // ------------------------------------
 
   async startTvLoginSession(deviceNonce, deviceName, redirectBaseUrl) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/start_tv_login_session`, {
+    const res = await fetchSupabaseAuth("/rest/v1/rpc/start_tv_login_session", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -229,7 +257,7 @@ class AuthManagerClass {
   }
 
   async pollTvLoginSession(code, deviceNonce) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/poll_tv_login_session`, {
+    const res = await fetchSupabaseAuth("/rest/v1/rpc/poll_tv_login_session", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -249,7 +277,7 @@ class AuthManagerClass {
   }
 
   async exchangeTvLoginSession(code, deviceNonce) {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/tv-logins-exchange`, {
+    const res = await fetchSupabaseAuth("/functions/v1/tv-logins-exchange", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -293,15 +321,15 @@ class AuthManagerClass {
       Authorization: `Bearer ${SessionStore.accessToken}`
     };
 
-    let res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_sync_owner`, {
+    let res = await fetchSupabaseAuth("/rest/v1/rpc/get_sync_owner", {
       method: "POST",
       headers: authHeaders
     });
 
     if (res.status === 401) {
-      const refreshed = await this.refreshSessionIfNeeded();
+      const refreshed = await this.refreshSessionIfNeeded({ force: true });
       if (refreshed) {
-        res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_sync_owner`, {
+        res = await fetchSupabaseAuth("/rest/v1/rpc/get_sync_owner", {
           method: "POST",
           headers: {
             ...authHeaders,
@@ -312,7 +340,11 @@ class AuthManagerClass {
     }
 
     if (!res.ok) {
-      if (res.status === 401) {
+      if (
+        res.status === 401 &&
+        !this.wasLastSessionRefreshTransientFailure() &&
+        this.state !== AuthState.SIGNED_OUT
+      ) {
         await this.signOut();
       }
       throw new Error(await res.text());

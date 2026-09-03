@@ -6,6 +6,7 @@ import { watchedItemsRepository } from "../../../data/repository/watchedItemsRep
 import { LayoutPreferences } from "../../../data/local/layoutPreferences.js";
 import { I18n } from "../../../i18n/index.js";
 import { Platform } from "../../../platform/index.js";
+import { getTvRuntimePerformanceProfile } from "../../../platform/tvRuntimePerformance.js";
 import { MODERN_HOME_CONSTANTS } from "../home/modernHomeLayout.js";
 import {
   activateLegacySidebarAction,
@@ -31,6 +32,13 @@ import {
   renderTitleWatchedBadge
 } from "../../components/watchedTitleBadge.js";
 import { renderLoadingIndicator } from "../../components/loadingIndicator.js";
+import { filterReleasedItems } from "../../../core/util/releaseInfoUtils.js";
+import {
+  buildSearchScheduleIndices,
+  buildSearchTargets,
+  catalogSkipStep,
+  catalogSupportsExtra
+} from "./searchCatalogTargets.js";
 
 const POSTER_HOLD_DELAY_MS = 650;
 const SEARCH_RESULTS_PER_ROW_DEFAULT = 18;
@@ -112,22 +120,6 @@ function formatCatalogRowTitle(catalogName, addonName, type, showTypeSuffix = tr
   return endsWithType ? base : `${base} - ${typeLabel}`;
 }
 
-function catalogSupportsExtra(catalog = {}, name = "") {
-  const target = String(name || "")
-    .trim()
-    .toLowerCase();
-  if (!target) return false;
-  return (
-    Array.isArray(catalog.extra) &&
-    catalog.extra.some(
-      (entry) =>
-        String(entry?.name || "")
-          .trim()
-          .toLowerCase() === target
-    )
-  );
-}
-
 function isSearchableCatalogType(type) {
   const normalized = String(type || "")
     .trim()
@@ -140,30 +132,9 @@ function isSearchableCatalogType(type) {
   );
 }
 
-function buildSearchTargets(addons = []) {
-  const targets = [];
-  addons.forEach((addon) => {
-    (addon.catalogs || []).forEach((catalog) => {
-      if (!catalogSupportsExtra(catalog, "search")) return;
-      if (!isSearchableCatalogType(catalog.apiType)) return;
-      targets.push({
-        addonBaseUrl: addon.baseUrl,
-        addonId: addon.id,
-        addonName: addon.displayName,
-        catalogId: catalog.id,
-        catalogName: catalog.name,
-        type: catalog.apiType,
-        supportsSkip: catalogSupportsExtra(catalog, "skip")
-      });
-    });
-  });
-  return targets;
-}
-
 function isPerformanceConstrainedRuntime() {
   return (
-    Platform.isWebOS() ||
-    Platform.isTizen() ||
+    getTvRuntimePerformanceProfile().isPerformanceConstrained ||
     Boolean(globalThis.document?.body?.classList?.contains("performance-constrained"))
   );
 }
@@ -272,13 +243,16 @@ function formatReleaseYear(item = {}) {
   return "";
 }
 
-async function withTimeout(promise, ms, fallbackValue) {
+async function withTimeout(promise, ms, fallbackValue, onTimeout = null) {
   let timer = null;
   try {
     return await Promise.race([
       promise,
       new Promise((resolve) => {
-        timer = setTimeout(() => resolve(fallbackValue), ms);
+        timer = setTimeout(() => {
+          if (typeof onTimeout === "function") onTimeout();
+          resolve(fallbackValue);
+        }, ms);
       })
     ]);
   } finally {
@@ -479,7 +453,10 @@ export const SearchScreen = {
     this.rowScrollLeftByKey = {};
     this.rowFocusedIndexByKey = {};
     this.restoredFocusedDescriptor = null;
+    // TV platforms provide voice input through their native keyboard/IME, not
+    // through a supported Web Speech API that an in-app button can start.
     this.voiceSearchSupported =
+      Platform.isBrowser() &&
       typeof window !== "undefined" &&
       (typeof window.SpeechRecognition === "function" ||
         typeof window.webkitSpeechRecognition === "function");
@@ -545,7 +522,18 @@ export const SearchScreen = {
   async reloadRows() {
     const token = this.loadToken;
     if (this.mode === "search" && this.query.length >= 2) {
-      this.rows = await this.searchRows(this.query, { token });
+      this.rows = await this.searchRows(this.query, {
+        token,
+        onFirstResults: (rows) => {
+          if (token !== this.loadToken) return;
+          this.rows = rows;
+          if (this.shouldPatchResultsWithoutReplacingInput()) {
+            this.renderResultsOnly();
+            return;
+          }
+          this.requestRender();
+        }
+      });
     } else if (this.mode === "discover") {
       this.rows = await this.loadDiscoverRows();
     } else {
@@ -580,7 +568,9 @@ export const SearchScreen = {
     ScreenUtils.indexFocusables(this.container);
     this.buildNavigationModel();
     this.bindActionEvents();
-    input.value = this.query || "";
+    // Keep the live IME value untouched while only the result siblings are refreshed.
+    // `this.query` is normalized for catalog requests and may omit a trailing space
+    // that the user has just entered and is still editing.
     input.focus?.();
     this.focusNode(this.container?.querySelector(".focusable.focused") || null, input);
     restoreInputSelection(input, selectionSnapshot);
@@ -602,14 +592,17 @@ export const SearchScreen = {
                 .toLowerCase() === "search" && Boolean(extra?.isRequired)
           );
         if (requiresSearch) return;
-        if (!isSearchableCatalogType(catalog.apiType)) return;
+        if (!isSearchableCatalogType(catalog.apiType) && !catalogSupportsExtra(catalog, "search"))
+          return;
         sections.push({
           addonBaseUrl: addon.baseUrl,
           addonId: addon.id,
           addonName: addon.displayName,
           catalogId: catalog.id,
           catalogName: catalog.name,
-          type: catalog.apiType
+          type: catalog.apiType,
+          supportsSkip: catalogSupportsExtra(catalog, "skip"),
+          skipStep: catalogSkipStep(catalog)
         });
       });
     });
@@ -628,7 +621,8 @@ export const SearchScreen = {
             catalogName: section.catalogName,
             type: section.type,
             skip: 0,
-            supportsSkip: true
+            skipStep: section.skipStep,
+            supportsSkip: section.supportsSkip !== false
           }),
           getSearchCatalogTimeoutMs(),
           { status: "error", message: "timeout" }
@@ -658,7 +652,10 @@ export const SearchScreen = {
     return resolved
       .filter((entry) => entry.result?.status === "success" && entry.result?.data?.items?.length)
       .map((entry) => {
-        const items = entry.result?.data?.items || [];
+        const rawItems = entry.result?.data?.items || [];
+        const items = this.layoutPrefs?.hideUnreleasedContent
+          ? filterReleasedItems(rawItems)
+          : rawItems;
         return {
           title: formatCatalogRowTitle(
             entry.catalogName,
@@ -676,19 +673,28 @@ export const SearchScreen = {
           addonName: entry.addonName,
           catalogId: entry.catalogId,
           catalogName: entry.catalogName,
+          nextSkip: Number(entry.result?.data?.nextSkip || 0),
           hasMore: Boolean(items.length > itemLimit || entry.result?.data?.hasMore),
+          initialItems: items,
+          supportsSkip: entry.supportsSkip !== false && entry.result?.data?.supportsSkip !== false,
+          skipStep: Number(entry.skipStep || entry.result?.data?.skipStep || 100),
           items: items.slice(0, itemLimit)
         };
-      });
+      })
+      .filter((row) => row.items.length);
   },
 
-  async searchRows(query, { token = this.loadToken } = {}) {
+  async searchRows(query, { token = this.loadToken, onFirstResults = null } = {}) {
     const addons = await addonRepository.getInstalledAddons();
     const searchableCatalogs = buildSearchTargets(addons);
+    const scheduleIndices = buildSearchScheduleIndices(searchableCatalogs);
     const batchSize = getSearchCatalogBatchSize();
     const itemLimit = getSearchResultsPerRow();
-    const responses = [];
+    const responses = new Array(searchableCatalogs.length);
+    let nextScheduleIndex = 0;
+    let publishedFirstResults = false;
     const runCatalogSearch = async (catalog) => {
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
       try {
         const result = await withTimeout(
           catalogRepository.getCatalog({
@@ -699,11 +705,14 @@ export const SearchScreen = {
             catalogName: catalog.catalogName,
             type: catalog.type,
             skip: 0,
+            skipStep: catalog.skipStep,
             extraArgs: { search: query },
-            supportsSkip: catalog.supportsSkip
+            supportsSkip: catalog.supportsSkip,
+            signal: controller?.signal || null
           }),
           getSearchCatalogTimeoutMs(),
-          { status: "error", message: "timeout" }
+          { status: "error", message: "timeout" },
+          () => controller?.abort()
         );
         return { catalog, result };
       } catch (err) {
@@ -715,46 +724,72 @@ export const SearchScreen = {
       }
     };
 
-    if (batchSize > 0 && searchableCatalogs.length > batchSize) {
-      for (let index = 0; index < searchableCatalogs.length; index += batchSize) {
-        if (token !== this.loadToken) {
-          break;
-        }
-        const batch = searchableCatalogs.slice(index, index + batchSize);
-        responses.push(...(await Promise.all(batch.map(runCatalogSearch))));
-        if (index + batchSize < searchableCatalogs.length) {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-      }
-    } else {
-      responses.push(...(await Promise.all(searchableCatalogs.map(runCatalogSearch))));
-    }
+    const buildRows = () =>
+      responses
+        .filter(({ result } = {}) => result?.status === "success" && result?.data?.items?.length)
+        .map(({ catalog, result }) => {
+          const rawItems = result?.data?.items || [];
+          const items = this.layoutPrefs?.hideUnreleasedContent
+            ? filterReleasedItems(rawItems)
+            : rawItems;
+          return {
+            title: formatCatalogRowTitle(
+              catalog.catalogName,
+              catalog.addonName,
+              catalog.type,
+              this.layoutPrefs?.catalogTypeSuffixEnabled !== false
+            ),
+            subtitle:
+              this.layoutPrefs?.catalogAddonNameEnabled !== false
+                ? `from ${catalog.addonName || "Addon"}`
+                : "",
+            type: catalog.type,
+            addonBaseUrl: catalog.addonBaseUrl,
+            addonId: catalog.addonId,
+            addonName: catalog.addonName,
+            catalogId: catalog.catalogId,
+            catalogName: catalog.catalogName,
+            nextSkip: Number(result?.data?.nextSkip || 0),
+            hasMore: Boolean(items.length > itemLimit || result?.data?.hasMore),
+            initialItems: items,
+            supportsSkip: catalog.supportsSkip !== false && result?.data?.supportsSkip !== false,
+            extraArgs: { search: query },
+            skipStep: Number(catalog.skipStep || result?.data?.skipStep || 100),
+            items: items.slice(0, itemLimit)
+          };
+        })
+        .filter((row) => row.items.length);
 
-    return responses
-      .filter(({ result }) => result?.status === "success" && result?.data?.items?.length)
-      .map(({ catalog, result }) => {
-        const items = result?.data?.items || [];
-        return {
-          title: formatCatalogRowTitle(
-            catalog.catalogName,
-            catalog.addonName,
-            catalog.type,
-            this.layoutPrefs?.catalogTypeSuffixEnabled !== false
-          ),
-          subtitle:
-            this.layoutPrefs?.catalogAddonNameEnabled !== false
-              ? `from ${catalog.addonName || "Addon"}`
-              : "",
-          type: catalog.type,
-          addonBaseUrl: catalog.addonBaseUrl,
-          addonId: catalog.addonId,
-          addonName: catalog.addonName,
-          catalogId: catalog.catalogId,
-          catalogName: catalog.catalogName,
-          hasMore: Boolean(items.length > itemLimit || result?.data?.hasMore),
-          items: items.slice(0, itemLimit)
-        };
-      });
+    const publishFirstResults = () => {
+      if (
+        publishedFirstResults ||
+        token !== this.loadToken ||
+        typeof onFirstResults !== "function"
+      ) {
+        return;
+      }
+      const rows = buildRows();
+      if (!rows.length) return;
+      publishedFirstResults = true;
+      onFirstResults(rows);
+    };
+
+    const runWorker = async () => {
+      while (token === this.loadToken) {
+        const index = scheduleIndices[nextScheduleIndex];
+        nextScheduleIndex += 1;
+        if (typeof index !== "number") return;
+        responses[index] = await runCatalogSearch(searchableCatalogs[index]);
+        publishFirstResults();
+      }
+    };
+    const workerCount = Math.min(
+      batchSize > 0 ? batchSize : searchableCatalogs.length,
+      searchableCatalogs.length
+    );
+    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+
+    return buildRows();
   },
 
   renderRows() {
@@ -773,7 +808,7 @@ export const SearchScreen = {
           <span class="search-empty-icon material-icons" aria-hidden="true">search</span>
           <h2>${escapeHtml(t("search_start_title", {}, "Start Searching"))}</h2>
           <p>${escapeHtml(
-            this.layoutPrefs?.searchDiscoverEnabled
+            this.layoutPrefs?.discoverLocation === "in_search"
               ? t("search_start_subtitle", {}, "Enter at least 2 characters")
               : t(
                   "search_start_subtitle_no_discover",
@@ -789,6 +824,9 @@ export const SearchScreen = {
       .map((row, rowIndex) => {
         const rowKey = row.stateKey || buildRowStateKey(row, rowIndex);
         const seeAllLabel = t("action_see_all", {}, "See All");
+        const seeAllArrowClass = I18n.isRtl() ? " is-rtl" : "";
+        const seeAllItems = Array.isArray(row.initialItems) ? row.initialItems : row.items || [];
+        const hasEnoughForSeeAll = seeAllItems.length >= 15;
         return `
       <section class="search-results-row" data-row-key="${escapeHtml(rowKey)}">
         <h3 class="search-results-title">${row.title}</h3>
@@ -813,14 +851,14 @@ export const SearchScreen = {
                 ${item.poster ? `<img class="search-result-poster" src="${item.poster}" alt="${item.name || "content"}" loading="lazy" decoding="async" />` : `<div class="search-result-poster placeholder"></div>`}
                 ${isTitleItemWatched(item, this.watchedTitleIds) ? renderTitleWatchedBadge() : ""}
               </div>
-              <div class="search-result-name">${item.name || "Untitled"}</div>
+              <div class="search-result-name" dir="auto">${item.name || "Untitled"}</div>
               <div class="search-result-date">${formatReleaseYear(item)}</div>
             </article>
           `
             )
             .join("")}
           ${
-            row.hasMore || (row.items || []).length >= 15
+            hasEnoughForSeeAll
               ? `
             <article class="search-result-card search-seeall-card focusable"
                      data-action="openCatalogSeeAll"
@@ -833,7 +871,7 @@ export const SearchScreen = {
                      data-row-index="${rowIndex}"
                      data-row-key="${escapeHtml(rowKey)}">
               <div class="search-seeall-inner">
-                <div class="search-seeall-arrow" aria-hidden="true">&#8594;</div>
+                <div class="search-seeall-arrow${seeAllArrowClass}" aria-hidden="true">&#8594;</div>
                 <div class="search-seeall-label">${escapeHtml(seeAllLabel)}</div>
               </div>
             </article>
@@ -860,9 +898,9 @@ export const SearchScreen = {
           pillIconOnly: Boolean(this.pillIconOnly)
         })}
         <main class="home-main search-content">
-          <section class="search-header${this.layoutPrefs?.searchDiscoverEnabled ? "" : " no-discover"}">
+          <section class="search-header${this.layoutPrefs?.discoverLocation === "in_search" ? "" : " no-discover"}${this.voiceSearchSupported ? "" : " no-voice"}">
             ${
-              this.layoutPrefs?.searchDiscoverEnabled
+              this.layoutPrefs?.discoverLocation === "in_search"
                 ? `
               <button class="search-discover-btn focusable" data-action="openDiscover">
                 <span class="search-action-icon material-icons" aria-hidden="true">explore</span>
@@ -870,13 +908,17 @@ export const SearchScreen = {
             `
                 : ""
             }
-            <button
+            ${
+              this.voiceSearchSupported
+                ? `<button
               class="search-voice-btn focusable${this.voiceSearchActive ? " listening" : ""}"
               data-action="openVoice"
               aria-label="Voice search"
             >
               <span class="search-action-icon material-icons" aria-hidden="true">mic</span>
-            </button>
+            </button>`
+                : ""
+            }
             <input
               id="searchInput"
               class="search-input-field focusable"
@@ -1106,7 +1148,7 @@ export const SearchScreen = {
     };
   },
 
-  resolvePreferredResultsNode(rowNodes = [], fallbackCol = 0) {
+  resolvePreferredResultsNode(rowNodes = [], _fallbackCol = 0) {
     if (!Array.isArray(rowNodes) || !rowNodes.length) {
       return null;
     }
@@ -1539,6 +1581,11 @@ export const SearchScreen = {
       if (direction === "down") {
         const firstRow = nav.rows?.[0] || [];
         const target = this.resolvePreferredResultsNode(firstRow, col);
+        if (target && current?.id === "searchInput") {
+          // Match Android TV: leaving the query field with DPAD_DOWN must dismiss the
+          // platform IME before focus moves to the first result row.
+          current.blur?.();
+        }
         return this.focusNode(current, target) || true;
       }
       if (direction === "up") {
@@ -1742,7 +1789,7 @@ export const SearchScreen = {
 
     if (action === "openDetail") this.openDetailFromNode(node);
     if (action === "openCatalogSeeAll") this.openCatalogSeeAllFromNode(node);
-    if (action === "openDiscover" && this.layoutPrefs?.searchDiscoverEnabled)
+    if (action === "openDiscover" && this.layoutPrefs?.discoverLocation === "in_search")
       Router.navigate("discover");
     if (action === "openVoice") this.handleVoiceSearch();
   },
@@ -1863,7 +1910,8 @@ export const SearchScreen = {
       addonBaseUrl: node.dataset.addonBaseUrl || "",
       addonId: node.dataset.addonId || "",
       addonName: node.dataset.addonName || "",
-      catalogType: node.dataset.catalogType || node.dataset.itemType || "movie"
+      catalogType: node.dataset.catalogType || node.dataset.itemType || "movie",
+      returnToSearchOnBack: true
     });
   },
 
@@ -1877,7 +1925,19 @@ export const SearchScreen = {
       catalogId: node.dataset.catalogId || "",
       catalogName: node.dataset.catalogName || "",
       type: node.dataset.catalogType || "movie",
-      initialItems: Array.isArray(sourceRow?.items) ? sourceRow.items : []
+      initialItems: Array.isArray(sourceRow?.initialItems)
+        ? sourceRow.initialItems
+        : Array.isArray(sourceRow?.items)
+          ? sourceRow.items
+          : [],
+      initialNextSkip: Number(sourceRow?.nextSkip || 0),
+      initialHasMore: Boolean(sourceRow?.hasMore),
+      supportsSkip: sourceRow?.supportsSkip !== false,
+      skipStep: Number(sourceRow?.skipStep || 100),
+      extraArgs:
+        sourceRow?.extraArgs && typeof sourceRow.extraArgs === "object"
+          ? { ...sourceRow.extraArgs }
+          : {}
     });
   },
 

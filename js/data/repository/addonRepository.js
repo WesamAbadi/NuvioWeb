@@ -10,17 +10,123 @@ const PROFILES_KEY = "profiles";
 const PROFILE_SCOPED_VERSION = 1;
 const MANIFEST_SUFFIX = "/manifest.json";
 const DEFAULT_ADDON_URLS = ["https://v3-cinemeta.strem.io", "https://opensubtitles-v3.strem.io"];
+const MANIFEST_CACHE_KEY = "addonManifestCacheV2";
+const MANIFEST_CACHE_VERSION = 2;
+const MANIFEST_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const MANIFEST_CACHE_MAX_ENTRIES = 128;
+const MANIFEST_CACHE_PERSIST_DELAY_MS = 250;
 
 class AddonRepository {
   constructor() {
     this.manifestCache = new Map();
+    this.manifestCacheTimestamps = new Map();
     this.manifestErrorCache = new Map();
     this.manifestRequests = new Map();
+    this.manifestRefreshRequests = new Map();
+    this.manifestCachePersistTimer = null;
     this.installedAddonsCache = null;
     this.installedAddonsCacheKey = "";
     this.installedAddonsPromise = null;
     this.installedAddonsPromiseKey = "";
     this.changeListeners = new Set();
+    this.manifestChangeListeners = new Set();
+    this.restoreManifestCache();
+  }
+
+  restoreManifestCache() {
+    const payload = LocalStore.get(MANIFEST_CACHE_KEY, null);
+    if (
+      !payload ||
+      Number(payload.version || 0) !== MANIFEST_CACHE_VERSION ||
+      !payload.entries ||
+      typeof payload.entries !== "object"
+    ) {
+      return;
+    }
+
+    Object.entries(payload.entries).forEach(([rawBaseUrl, entry]) => {
+      const baseUrl = this.canonicalizeUrl(rawBaseUrl);
+      const addon = entry?.addon;
+      const cachedAtMs = Number(entry?.cachedAtMs || 0);
+      if (
+        !baseUrl ||
+        !Number.isFinite(cachedAtMs) ||
+        cachedAtMs <= 0 ||
+        !this.isValidManifestCacheAddon(addon, baseUrl)
+      ) {
+        return;
+      }
+      this.manifestCache.set(baseUrl, { ...addon, baseUrl });
+      this.manifestCacheTimestamps.set(baseUrl, cachedAtMs);
+    });
+  }
+
+  isValidManifestCacheAddon(addon, baseUrl) {
+    return Boolean(
+      addon &&
+      typeof addon === "object" &&
+      this.canonicalizeUrl(addon.baseUrl) === baseUrl &&
+      Array.isArray(addon.catalogs) &&
+      Array.isArray(addon.resources)
+    );
+  }
+
+  scheduleManifestCachePersist() {
+    if (this.manifestCachePersistTimer) {
+      return;
+    }
+    this.manifestCachePersistTimer = setTimeout(() => {
+      this.manifestCachePersistTimer = null;
+      const entries = Array.from(this.manifestCache.entries())
+        .map(([baseUrl, addon]) => ({
+          baseUrl,
+          addon,
+          cachedAtMs: Number(this.manifestCacheTimestamps.get(baseUrl) || 0)
+        }))
+        .filter(
+          (entry) =>
+            entry.cachedAtMs > 0 && this.isValidManifestCacheAddon(entry.addon, entry.baseUrl)
+        )
+        .sort((left, right) => right.cachedAtMs - left.cachedAtMs)
+        .slice(0, MANIFEST_CACHE_MAX_ENTRIES)
+        .reduce((accumulator, entry) => {
+          accumulator[entry.baseUrl] = {
+            cachedAtMs: entry.cachedAtMs,
+            addon: entry.addon
+          };
+          return accumulator;
+        }, {});
+      LocalStore.set(MANIFEST_CACHE_KEY, {
+        version: MANIFEST_CACHE_VERSION,
+        entries
+      });
+    }, MANIFEST_CACHE_PERSIST_DELAY_MS);
+  }
+
+  setManifestCacheEntry(baseUrl, addon) {
+    const cleanBaseUrl = this.canonicalizeUrl(baseUrl);
+    if (!cleanBaseUrl || !this.isValidManifestCacheAddon(addon, cleanBaseUrl)) {
+      return;
+    }
+    this.manifestCache.set(cleanBaseUrl, { ...addon, baseUrl: cleanBaseUrl });
+    this.manifestCacheTimestamps.set(cleanBaseUrl, Date.now());
+    this.scheduleManifestCachePersist();
+  }
+
+  deleteManifestCacheEntry(baseUrl) {
+    const cleanBaseUrl = this.canonicalizeUrl(baseUrl);
+    const didDelete = this.manifestCache.delete(cleanBaseUrl);
+    this.manifestCacheTimestamps.delete(cleanBaseUrl);
+    if (didDelete) {
+      this.scheduleManifestCachePersist();
+    }
+    return didDelete;
+  }
+
+  isManifestCacheStale(baseUrl) {
+    const cleanBaseUrl = this.canonicalizeUrl(baseUrl);
+    const cachedAtMs = Number(this.manifestCacheTimestamps.get(cleanBaseUrl) || 0);
+    return !cachedAtMs || Date.now() - cachedAtMs >= MANIFEST_CACHE_TTL_MS;
   }
 
   canonicalizeUrl(url) {
@@ -298,6 +404,7 @@ class AddonRepository {
     const manifestUrl = this.buildManifestUrl(cleanBaseUrl);
     const force = Boolean(options?.force);
     const preferCache = Boolean(options?.preferCache);
+    const timeoutMs = options?.timeoutMs;
 
     if (!force && preferCache) {
       const cached = this.manifestCache.get(cleanBaseUrl);
@@ -315,10 +422,12 @@ class AddonRepository {
     }
 
     const request = (async () => {
-      const result = await safeApiCall(() => AddonApi.getManifest(manifestUrl));
+      const result = await safeApiCall(() =>
+        AddonApi.getManifest(manifestUrl, timeoutMs === undefined ? {} : { timeoutMs })
+      );
       if (result.status === "success") {
         const addon = this.mapManifest(result.data, cleanBaseUrl);
-        this.manifestCache.set(cleanBaseUrl, addon);
+        this.setManifestCacheEntry(cleanBaseUrl, addon);
         this.manifestErrorCache.delete(cleanBaseUrl);
         return { status: "success", data: this.withDisplayNameOverride(addon) };
       }
@@ -330,7 +439,7 @@ class AddonRepository {
 
       const fallback = this.getBuiltinFallbackManifest(cleanBaseUrl);
       if (fallback) {
-        this.manifestCache.set(cleanBaseUrl, fallback);
+        this.setManifestCacheEntry(cleanBaseUrl, fallback);
         this.manifestErrorCache.delete(cleanBaseUrl);
         return { status: "success", data: this.withDisplayNameOverride(fallback) };
       }
@@ -368,6 +477,61 @@ class AddonRepository {
     return this.applyDisplayNames(addons);
   }
 
+  async refreshInstalledAddons(options = {}) {
+    const includeDisabled = Boolean(options?.includeDisabled);
+    const allUrls = this.getInstalledAddonUrls();
+    const requestedUrls = Array.isArray(options?.urls) ? options.urls : allUrls;
+    const requestedUrlSet = new Set(
+      requestedUrls.map((url) => this.canonicalizeUrl(url)).filter(Boolean)
+    );
+    const urls = allUrls
+      .map((url) => this.canonicalizeUrl(url))
+      .filter((url, index, values) => values.indexOf(url) === index)
+      .filter((url) => requestedUrlSet.has(url))
+      .filter((url) => includeDisabled || this.isAddonEnabled(url));
+    const timeoutMs = options?.timeoutMs;
+    const refreshKey = JSON.stringify({
+      profileId: this.getActiveStorageProfileId(),
+      urls,
+      includeDisabled,
+      timeoutMs
+    });
+    if (this.manifestRefreshRequests.has(refreshKey)) {
+      return this.manifestRefreshRequests.get(refreshKey);
+    }
+
+    const request = (async () => {
+      const previous = new Map(
+        urls.map((url) => [url, JSON.stringify(this.manifestCache.get(url) || null)])
+      );
+      await Promise.all(
+        urls.map((url) =>
+          this.fetchAddon(url, {
+            force: true,
+            timeoutMs
+          })
+        )
+      );
+      const changed = urls.some(
+        (url) => JSON.stringify(this.manifestCache.get(url) || null) !== previous.get(url)
+      );
+      if (changed) {
+        this.invalidateInstalledAddonsCache();
+        this.notifyManifestCacheChanged();
+      }
+      return this.getCachedInstalledAddons(urls, { includeDisabled });
+    })();
+
+    this.manifestRefreshRequests.set(refreshKey, request);
+    try {
+      return await request;
+    } finally {
+      if (this.manifestRefreshRequests.get(refreshKey) === request) {
+        this.manifestRefreshRequests.delete(refreshKey);
+      }
+    }
+  }
+
   async getInstalledAddons(options = {}) {
     const includeDisabled = Boolean(options?.includeDisabled);
     const allUrls = this.getInstalledAddonUrls();
@@ -386,6 +550,26 @@ class AddonRepository {
     });
     const force = Boolean(options?.force);
     const cacheOnly = Boolean(options?.cacheOnly);
+    const staleWhileRevalidate = Boolean(options?.staleWhileRevalidate);
+    const timeoutMs = options?.timeoutMs;
+
+    if (staleWhileRevalidate && !force) {
+      const refreshUrls = urls.filter(
+        (url) =>
+          !this.manifestCache.has(this.canonicalizeUrl(url)) || this.isManifestCacheStale(url)
+      );
+      if (refreshUrls.length) {
+        void this.refreshInstalledAddons({
+          urls: refreshUrls,
+          includeDisabled,
+          timeoutMs
+        }).catch((error) => {
+          console.warn("Background addon manifest refresh failed", error);
+        });
+      }
+      return this.getCachedInstalledAddons(urls, { includeDisabled });
+    }
+
     if (!force && this.installedAddonsCache && this.installedAddonsCacheKey === cacheKey) {
       return [...this.installedAddonsCache];
     }
@@ -403,7 +587,8 @@ class AddonRepository {
         urls.map((url) =>
           this.fetchAddon(url, {
             force,
-            preferCache: !force
+            preferCache: !force,
+            timeoutMs
           })
         )
       );
@@ -483,7 +668,7 @@ class AddonRepository {
       (value) => this.normalizeAddonEnabledStates(value),
       nextEnabledStates
     );
-    this.manifestCache.delete(clean);
+    this.deleteManifestCacheEntry(clean);
     this.manifestErrorCache.delete(clean);
     this.invalidateInstalledAddonsCache();
     this.notifyAddonsChanged("remove");
@@ -496,7 +681,7 @@ class AddonRepository {
       return { status: "error", message: "Invalid addon URL" };
     }
 
-    this.manifestCache.delete(clean);
+    this.deleteManifestCacheEntry(clean);
     this.manifestErrorCache.delete(clean);
     this.invalidateInstalledAddonsCache();
     const result = await this.fetchAddon(clean, { force: true });
@@ -537,7 +722,7 @@ class AddonRepository {
       current
         .filter((url) => !normalizedSet.has(url))
         .forEach((url) => {
-          this.manifestCache.delete(url);
+          this.deleteManifestCacheEntry(url);
           this.manifestErrorCache.delete(url);
         });
       this.invalidateInstalledAddonsCache();
@@ -558,6 +743,16 @@ class AddonRepository {
     };
   }
 
+  onManifestCacheChanged(listener) {
+    if (typeof listener !== "function") {
+      return () => {};
+    }
+    this.manifestChangeListeners.add(listener);
+    return () => {
+      this.manifestChangeListeners.delete(listener);
+    };
+  }
+
   notifyAddonsChanged(reason = "unknown") {
     this.invalidateInstalledAddonsCache();
     this.changeListeners.forEach((listener) => {
@@ -565,6 +760,16 @@ class AddonRepository {
         listener(reason);
       } catch (error) {
         console.warn("Addon change listener failed", error);
+      }
+    });
+  }
+
+  notifyManifestCacheChanged() {
+    this.manifestChangeListeners.forEach((listener) => {
+      try {
+        listener();
+      } catch (error) {
+        console.warn("Addon manifest change listener failed", error);
       }
     });
   }
@@ -601,7 +806,12 @@ class AddonRepository {
       id: catalog.id,
       name: catalog.name || catalog.id,
       apiType: (catalog.type || "").trim(),
-      extra: this.mapCatalogExtra(catalog)
+      extra: this.mapCatalogExtra(catalog),
+      pageSize: Number.isFinite(Number(catalog.pageSize)) ? Number(catalog.pageSize) : null,
+      showInHome: catalog.showInHome === true,
+      hasExplicitShowInHome: catalog.showInHome !== null && catalog.showInHome !== undefined,
+      extraSupported: Array.isArray(catalog.extraSupported) ? [...catalog.extraSupported] : [],
+      extraRequired: Array.isArray(catalog.extraRequired) ? [...catalog.extraRequired] : []
     }));
 
     return {
@@ -621,22 +831,44 @@ class AddonRepository {
   }
 
   mapCatalogExtra(catalog = {}) {
-    if (Array.isArray(catalog.extra)) {
-      return catalog.extra.map((entry) => ({
-        name: entry.name,
-        isRequired: Boolean(entry.isRequired),
-        options: Array.isArray(entry.options) ? entry.options : null
-      }));
-    }
-    // Legacy manifest format: extraSupported/extraRequired as plain name arrays.
-    const required = Array.isArray(catalog.extraRequired) ? catalog.extraRequired : [];
-    const supported = Array.isArray(catalog.extraSupported) ? catalog.extraSupported : [];
-    const names = supported.concat(required.filter((name) => supported.indexOf(name) === -1));
-    return names.map((name) => ({
-      name: String(name),
-      isRequired: required.indexOf(name) !== -1,
-      options: null
-    }));
+    const extras = [];
+    const isManifestBoolean = (value) =>
+      value === true ||
+      (typeof value === "string" && value.trim().toLowerCase() === "true") ||
+      (typeof value === "number" && value !== 0);
+    const addExtra = (name, isRequired = false, options = null) => {
+      const normalizedName = String(name || "").trim();
+      if (!normalizedName) {
+        return;
+      }
+      const existing = extras.find(
+        (entry) => entry.name.toLowerCase() === normalizedName.toLowerCase()
+      );
+      if (existing) {
+        existing.isRequired = existing.isRequired || isManifestBoolean(isRequired);
+        if (!existing.options && Array.isArray(options)) {
+          existing.options = options;
+        }
+        return;
+      }
+      extras.push({
+        // Android normalizes full-form extra names before exposing the manifest
+        // to the UI; keep the same canonical representation here.
+        name: normalizedName.toLowerCase(),
+        isRequired: isManifestBoolean(isRequired),
+        options: Array.isArray(options) ? options : null
+      });
+    };
+
+    (Array.isArray(catalog.extra) ? catalog.extra : []).forEach((entry) => {
+      const name = typeof entry === "string" ? entry : entry?.name;
+      addExtra(name, entry?.isRequired, entry?.options);
+    });
+
+    // Keep legacy extraSupported/extraRequired separate. Android checks those
+    // arrays through supportsExtra(), while required-search detection only
+    // applies to the full-form `extra` declaration.
+    return extras;
   }
 
   parseResources(resources, defaultTypes) {
@@ -680,13 +912,13 @@ class AddonRepository {
   }
 
   resourceSupportsType(resource = {}, type = "") {
-    const targetType = String(type || "").trim().toLowerCase();
+    const targetType = String(type || "")
+      .trim()
+      .toLowerCase();
     if (!targetType) {
       return false;
     }
-    const types = this.getResourceTypes(resource).map((resourceType) =>
-      resourceType.toLowerCase()
-    );
+    const types = this.getResourceTypes(resource).map((resourceType) => resourceType.toLowerCase());
     return !types.length || types.includes(targetType);
   }
 
@@ -710,12 +942,15 @@ class AddonRepository {
     id = "",
     options = {}
   ) {
-    const targetResource = String(resourceName || "").trim().toLowerCase();
+    const targetResource = String(resourceName || "")
+      .trim()
+      .toLowerCase();
     const cleanRequestedType = String(requestedType || "").trim();
     const resources = (addon?.resources || []).filter(
       (resource) =>
-        String(resource?.name || "").trim().toLowerCase() === targetResource &&
-        this.resourceSupportsId(addon, resource, id, options)
+        String(resource?.name || "")
+          .trim()
+          .toLowerCase() === targetResource && this.resourceSupportsId(addon, resource, id, options)
     );
     if (!resources.length) {
       return "";
@@ -783,8 +1018,18 @@ class AddonRepository {
         { name: "meta", types: ["movie", "series"], idPrefixes: null }
       ],
       catalogs: [
-        { id: "top", name: "Top Movies", apiType: "movie", extra: [] },
-        { id: "top", name: "Top Series", apiType: "series", extra: [] }
+        {
+          id: "top",
+          name: "Top Movies",
+          apiType: "movie",
+          extra: [{ name: "search" }]
+        },
+        {
+          id: "top",
+          name: "Top Series",
+          apiType: "series",
+          extra: [{ name: "search" }]
+        }
       ]
     };
   }

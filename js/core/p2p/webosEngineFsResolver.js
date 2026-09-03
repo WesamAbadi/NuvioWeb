@@ -6,6 +6,7 @@ import {
 
 const ENGINEFS_CREATE_TIMEOUT_MS = 60000;
 const ENGINEFS_KIND = "webos-enginefs";
+const LOCAL_HOST_NAMES = new Set(["127.0.0.1", "localhost", "::1"]);
 
 function logEngineFsDebug(...args) {
   if (globalThis.__NUVIO_DEBUG_ENGINEFS__) {
@@ -108,10 +109,12 @@ function isMagnetUri(value = "") {
 
 function getDirectPlaybackUrl(stream = {}) {
   const candidates = [stream.url, stream.externalUrl];
-  return candidates.find((value) => {
-    const url = String(value || "").trim();
-    return url && !isMagnetUri(url);
-  }) || "";
+  return (
+    candidates.find((value) => {
+      const url = String(value || "").trim();
+      return url && !isMagnetUri(url);
+    }) || ""
+  );
 }
 
 function normalizeTrackerSource(value = "") {
@@ -172,13 +175,29 @@ function getTrackerSources(stream = {}, magnetUri = "") {
 function normalizeBaseUrl(value = "") {
   try {
     const parsed = new URL(String(value || "").trim());
-    if (parsed.protocol !== "http:") {
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    if (parsed.protocol !== "http:" || !LOCAL_HOST_NAMES.has(hostname)) {
       return "";
     }
     return `http://${parsed.hostname}:${parsed.port || "80"}`;
   } catch (_) {
     return "";
   }
+}
+
+function isLocalHostUrl(value = "") {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return parsed.protocol === "http:" && LOCAL_HOST_NAMES.has(hostname);
+  } catch (_) {
+    return false;
+  }
+}
+
+function normalizeLocalPlaybackUrl(value = "") {
+  const normalized = String(value || "").trim();
+  return normalized && isLocalHostUrl(normalized) ? normalized : "";
 }
 
 function buildPlaybackUrl(baseUrl, infoHash, fileIdx, sources = []) {
@@ -398,13 +417,7 @@ function isEngineFsSwarmActive(snapshot = {}) {
   );
 }
 
-async function waitForEngineFsReady(
-  baseCandidate,
-  infoHash,
-  fileIdx,
-  playbackUrl,
-  _options = {}
-) {
+async function waitForEngineFsReady(baseCandidate, infoHash, fileIdx, playbackUrl, _options = {}) {
   const start = Date.now();
   let baseRoot = String(baseCandidate || "").replace(/\/$/, "");
   try {
@@ -631,14 +644,19 @@ function normalizeEngineFsState(value = {}) {
     return null;
   }
   const fileIdx = Number(source.fileIdx);
+  const rawPlaybackUrl = String(source.playbackUrl || source.url || "").trim();
+  if (rawPlaybackUrl && !isLocalHostUrl(rawPlaybackUrl)) {
+    return null;
+  }
+  const playbackUrl = normalizeLocalPlaybackUrl(rawPlaybackUrl);
   return {
     kind: ENGINEFS_KIND,
     infoHash,
     fileIdx: Number.isFinite(fileIdx) ? fileIdx : -1,
-    playbackUrl: String(source.playbackUrl || source.url || "").trim(),
+    playbackUrl,
     mimeType: String(source.mimeType || source.sourceType || "").trim() || null,
-    baseUrlKind: String(source.baseUrlKind || "").trim() || null,
-    publicPlaybackUrl: String(source.publicPlaybackUrl || "").trim() || null
+    baseUrlKind: "local-service",
+    publicPlaybackUrl: normalizeLocalPlaybackUrl(source.publicPlaybackUrl || "") || null
   };
 }
 
@@ -762,16 +780,6 @@ export const WebOsEngineFsResolver = {
         return "";
       };
 
-      const isLocalHostUrl = (urlStr) => {
-        try {
-          const p = new URL(String(urlStr));
-          const host = p.hostname;
-          return host === "127.0.0.1" || host === "localhost" || host === "::1";
-        } catch (_) {
-          return false;
-        }
-      };
-
       const settingsBase = parseSettingsBase(statusPayload);
       const statusUrl = normalizeBaseUrl(statusPayload?.url || "");
       const publicBaseCandidate =
@@ -817,10 +825,13 @@ export const WebOsEngineFsResolver = {
           });
         }
       } else {
-        const detail = statusError
-          || statusPayload?.error?.message
-          || (statusPayload?.settingsReachable === false ? "EngineFS local runtime settings endpoint is unreachable" : "")
-          || "EngineFS local runtime URL is unavailable";
+        const detail =
+          statusError ||
+          statusPayload?.error?.message ||
+          (statusPayload?.settingsReachable === false
+            ? "EngineFS local runtime settings endpoint is unreachable"
+            : "") ||
+          "EngineFS local runtime URL is unavailable";
         return { status: "unavailable", detail };
       }
       if (createPayload.returnValue === false) {
@@ -910,7 +921,7 @@ export const WebOsEngineFsResolver = {
         // If absolute URL, accept only if it's not local
         try {
           const abs = new URL(candidatePlaybackFromCreate);
-          if (!isLocalHostUrl(abs.href)) {
+          if (isLocalHostUrl(abs.href) && hasSelectedFileIdx) {
             const filename = selectedFilename;
             // Build playback URL as origin/<infoHash>/<fileIdx> (no filename)
             let finalPlayback = null;

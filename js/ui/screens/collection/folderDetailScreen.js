@@ -1,6 +1,7 @@
 import { Router } from "../../navigation/router.js";
 import { ScreenUtils } from "../../navigation/screen.js";
 import { Environment } from "../../../platform/environment.js";
+import { getTvRuntimePerformanceProfile } from "../../../platform/tvRuntimePerformance.js";
 import { addonRepository } from "../../../data/repository/addonRepository.js";
 import { catalogRepository } from "../../../data/repository/catalogRepository.js";
 import { watchedItemsRepository } from "../../../data/repository/watchedItemsRepository.js";
@@ -9,6 +10,8 @@ import { LayoutPreferences } from "../../../data/local/layoutPreferences.js";
 import { TmdbService } from "../../../core/tmdb/tmdbService.js";
 import { TmdbSettingsStore } from "../../../data/local/tmdbSettingsStore.js";
 import { TmdbMetadataService } from "../../../core/tmdb/tmdbMetadataService.js";
+import { catalogSkipStep, catalogSupportsExtra } from "../../../core/addons/homeCatalogs.js";
+import { toTraktImageUrl } from "../../../core/trakt/traktImageUrl.js";
 import { TMDB_API_KEY, TRAKT_API_URL, TRAKT_CLIENT_ID } from "../../../config.js";
 import {
   HomeScreen,
@@ -34,6 +37,8 @@ const TMDB_API_URL = "https://api.themoviedb.org/3";
 const TMDB_POSTER_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w342";
 const TMDB_BACKDROP_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w1280";
 const TRAKT_PAGE_SIZE = 50;
+const FOLDER_LOADING_ROW_ITEM_COUNT = 6;
+const FOLDER_SOURCE_RENDER_BATCH_MS = 180;
 const STREAMING_NETWORK_PRESETS = new Map([
   ["netflix", { title: "Netflix", tmdbId: 213 }],
   ["hbo", { title: "HBO", tmdbId: 49 }],
@@ -73,6 +78,29 @@ function firstNonEmpty(...values) {
   return "";
 }
 
+function normalizeTraktImageCandidate(value) {
+  if (typeof value === "string") {
+    return toTraktImageUrl(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeTraktImageCandidate).find(Boolean) || "";
+  }
+  if (value && typeof value === "object") {
+    return (
+      [value.full, value.medium, value.thumb].map(normalizeTraktImageCandidate).find(Boolean) || ""
+    );
+  }
+  return "";
+}
+
+function bestTraktImage(images = {}, ...kinds) {
+  return kinds.map((kind) => normalizeTraktImageCandidate(images?.[kind])).find(Boolean) || "";
+}
+
+function folderPosterLoadingMode() {
+  return getTvRuntimePerformanceProfile().isPerformanceConstrained ? "eager" : "lazy";
+}
+
 function toImageUrl(path, kind = "poster") {
   if (!path) {
     return "";
@@ -92,19 +120,56 @@ function buildPlaceholderPosterDataUrl() {
 
 function normalizeItem(item = {}, fallbackType = "movie") {
   const source = item && typeof item === "object" ? item : {};
-  const type = String(source.type || source.apiType || fallbackType).toLowerCase() === "tv" ? "series" : String(source.type || source.apiType || fallbackType || "movie").toLowerCase();
-  const runtimeValue = source.runtimeMinutes ?? source.runtime ?? source.durationMinutes ?? source.duration_minutes ?? 0;
+  const type =
+    String(source.type || source.apiType || fallbackType).toLowerCase() === "tv"
+      ? "series"
+      : String(source.type || source.apiType || fallbackType || "movie").toLowerCase();
+  const runtimeValue =
+    source.runtimeMinutes ??
+    source.runtime ??
+    source.durationMinutes ??
+    source.duration_minutes ??
+    0;
   return {
     ...source,
     id: String(source.id || "").trim(),
     type,
     apiType: type,
     name: firstNonEmpty(source.name, source.title, source.id),
-    poster: firstNonEmpty(source.poster, source.thumbnail, source.background, source.backdrop, source.backdropUrl, source.landscapePoster),
-    landscapePoster: firstNonEmpty(source.landscapePoster, source.backdrop, source.backdropUrl, source.background),
-    backdrop: firstNonEmpty(source.backdrop, source.backdropUrl, source.background, source.landscapePoster),
-    background: firstNonEmpty(source.background, source.backdrop, source.backdropUrl, source.landscapePoster, source.poster),
-    releaseInfo: firstNonEmpty(source.releaseInfo, source.released, source.releaseDate, source.release_date, source.year),
+    poster: firstNonEmpty(
+      source.poster,
+      source.thumbnail,
+      source.background,
+      source.backdrop,
+      source.backdropUrl,
+      source.landscapePoster
+    ),
+    landscapePoster: firstNonEmpty(
+      source.landscapePoster,
+      source.backdrop,
+      source.backdropUrl,
+      source.background
+    ),
+    backdrop: firstNonEmpty(
+      source.backdrop,
+      source.backdropUrl,
+      source.background,
+      source.landscapePoster
+    ),
+    background: firstNonEmpty(
+      source.background,
+      source.backdrop,
+      source.backdropUrl,
+      source.landscapePoster,
+      source.poster
+    ),
+    releaseInfo: firstNonEmpty(
+      source.releaseInfo,
+      source.released,
+      source.releaseDate,
+      source.release_date,
+      source.year
+    ),
     released: firstNonEmpty(source.released, source.releaseDate, source.release_date),
     releaseDate: firstNonEmpty(source.releaseDate, source.release_date, source.released),
     logo: firstNonEmpty(source.logo),
@@ -168,21 +233,39 @@ function buildFolderSourceRows(tabs = []) {
     .map((tab, index) => {
       const sourceTabIndex = tabs.indexOf(tab);
       const type = sourceType(tab.source || {});
+      const rowKey = tab.key || `folder_source_${index}`;
       return {
-        homeCatalogKey: tab.key || `folder_source_${index}`,
+        homeCatalogKey: rowKey,
         folderTabIndex: sourceTabIndex >= 0 ? sourceTabIndex : index,
         addonId: tab.source?.addonId || tab.source?.provider || "collection",
         addonBaseUrl: tab.source?.addonBaseUrl || "",
         addonName: tab.source?.addonName || tab.source?.provider || "Collection",
-        catalogId: tab.source?.catalogId || tab.source?.tmdbId || tab.source?.traktListId || tab.key || `source_${index}`,
+        catalogId:
+          tab.source?.catalogId ||
+          tab.source?.tmdbId ||
+          tab.source?.traktListId ||
+          tab.key ||
+          `source_${index}`,
         catalogName: tab.label || tab.source?.catalogName || tab.source?.title || "Collection",
         type,
         result: {
-          status: tab.loading ? "loading" : (tab.error ? "error" : "success"),
+          status: tab.loading ? "loading" : tab.error ? "error" : "success",
           data: {
-            items: Array.isArray(tab.items) ? tab.items : []
+            items: Array.isArray(tab.items) ? tab.items : [],
+            hasMore: Boolean(tab.hasMore),
+            supportsSkip: tab.supportsSkip !== false,
+            skipStep: Number(tab.skipStep || 100),
+            currentPage: Math.max(0, Number(tab.page || 1) - 1),
+            nextSkip: Math.max(0, Number(tab.nextSkip || 0))
           }
         },
+        loadingItems: tab.loading
+          ? Array.from({ length: FOLDER_LOADING_ROW_ITEM_COUNT }, (_, loadingIndex) => ({
+              id: `${rowKey}__loading_${loadingIndex}`,
+              name: "Loading",
+              isLoading: true
+            }))
+          : null,
         suppressPosterText: true
       };
     });
@@ -241,7 +324,10 @@ function groupNodesByOffsetTop(nodes = []) {
 function roundRobinMerge(lists = []) {
   const result = [];
   const seen = new Set();
-  const maxSize = lists.reduce((max, list) => Math.max(max, Array.isArray(list) ? list.length : 0), 0);
+  const maxSize = lists.reduce(
+    (max, list) => Math.max(max, Array.isArray(list) ? list.length : 0),
+    0
+  );
   for (let index = 0; index < maxSize; index += 1) {
     lists.forEach((list) => {
       const item = list?.[index];
@@ -258,8 +344,18 @@ function roundRobinMerge(lists = []) {
 
 function buildAddonTabLabel(source = {}, addons = []) {
   const addon = findAddonForSource(source, addons);
-  const catalog = addon?.catalogs?.find((entry) => String(entry?.id || "") === String(source.catalogId || "") && String(entry?.apiType || "") === String(source.type || "")) || null;
-  const baseName = firstNonEmpty(catalog?.name, source.catalogName, source.title, source.catalogId || source.type || "Catalog");
+  const catalog =
+    addon?.catalogs?.find(
+      (entry) =>
+        String(entry?.id || "") === String(source.catalogId || "") &&
+        String(entry?.apiType || "") === String(source.type || "")
+    ) || null;
+  const baseName = firstNonEmpty(
+    catalog?.name,
+    source.catalogName,
+    source.title,
+    source.catalogId || source.type || "Catalog"
+  );
   return source.genre ? `${baseName} · ${source.genre}` : baseName;
 }
 
@@ -273,9 +369,11 @@ function sameAddonUrl(left = "", right = "") {
 }
 
 function findAddonForSource(source = {}, addons = []) {
-  return addons.find((entry) => String(entry?.id || "") === String(source.addonId || ""))
-    || addons.find((entry) => sameAddonUrl(entry?.baseUrl, source.addonBaseUrl))
-    || null;
+  return (
+    addons.find((entry) => String(entry?.id || "") === String(source.addonId || "")) ||
+    addons.find((entry) => sameAddonUrl(entry?.baseUrl, source.addonBaseUrl)) ||
+    null
+  );
 }
 
 function buildTmdbTabLabel(source = {}) {
@@ -324,37 +422,91 @@ async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(String(payload?.message || payload?.error || response.statusText || "Request failed"));
+    throw new Error(
+      String(payload?.message || payload?.error || response.statusText || "Request failed")
+    );
   }
   return { response, payload };
 }
 
-async function fetchAddonSourceItems(source = {}, page = 1) {
+async function fetchAddonSourceItems(source = {}, page = 1, skipOverride = null) {
   const addons = await addonRepository.getInstalledAddons();
-  const addon = findAddonForSource(source, addons);
-  const addonBaseUrl = firstNonEmpty(addon?.baseUrl, source.addonBaseUrl);
+  let effectiveAddon = findAddonForSource(source, addons);
+  const extraArgs = source.genre ? { genre: source.genre } : {};
+  const sourceCatalogId = String(source.catalogId || "");
+  const sourceCatalogIdBase = sourceCatalogId.split(",")[0].trim();
+  const sourceTypeValue = String(source.type || source.apiType || "");
+  const findCatalog = (candidateAddon, allowBaseId = false) => {
+    const catalogs = candidateAddon?.catalogs || [];
+    return (
+      catalogs.find(
+        (entry) =>
+          String(entry?.id || "") === sourceCatalogId &&
+          String(entry?.apiType || "") === sourceTypeValue
+      ) ||
+      (allowBaseId && sourceCatalogIdBase && sourceCatalogIdBase !== sourceCatalogId
+        ? catalogs.find(
+            (entry) =>
+              String(entry?.id || "") === sourceCatalogIdBase &&
+              String(entry?.apiType || "") === sourceTypeValue
+          )
+        : null)
+    );
+  };
+  let catalog = findCatalog(effectiveAddon, true) || null;
+  if (!catalog) {
+    for (const candidate of addons) {
+      const match = findCatalog(candidate);
+      if (match) {
+        effectiveAddon = candidate;
+        catalog = match;
+        break;
+      }
+    }
+  }
+  const addonBaseUrl = firstNonEmpty(effectiveAddon?.baseUrl, source.addonBaseUrl);
   if (!addonBaseUrl) {
     throw new Error("Addon not found");
   }
-  const extraArgs = source.genre ? { genre: source.genre } : {};
+  const supportsSkip = catalogSupportsExtra(catalog, "skip");
+  const skipStep = catalogSkipStep(catalog);
+  const requestedSkip = skipOverride == null ? Number.NaN : Number(skipOverride);
+  const skip = Number.isFinite(requestedSkip)
+    ? Math.max(0, Math.trunc(requestedSkip))
+    : Math.max(0, (page - 1) * skipStep);
   const result = await catalogRepository.getCatalog({
     addonBaseUrl,
-    addonId: firstNonEmpty(addon?.id, source.addonId, addonBaseUrl),
-    addonName: firstNonEmpty(addon?.displayName, addon?.name, source.addonName, "Addon"),
+    addonId: firstNonEmpty(effectiveAddon?.id, source.addonId, addonBaseUrl),
+    addonName: firstNonEmpty(
+      effectiveAddon?.displayName,
+      effectiveAddon?.name,
+      source.addonName,
+      "Addon"
+    ),
     catalogId: source.catalogId,
     catalogName: buildAddonTabLabel(source, addons),
     type: source.type,
-    skip: Math.max(0, (page - 1) * 100),
+    skip,
+    skipStep,
     extraArgs,
-    supportsSkip: true
+    supportsSkip
   });
   if (result?.status !== "success") {
     throw new Error(String(result?.message || "Could not load catalog"));
   }
+  const reportedNextSkip = Number(result.data?.nextSkip);
+  const items = (result.data?.items || [])
+    .map((item) => normalizeItem(item, source.type))
+    .filter((item) => item.id);
   return {
-    items: (result.data?.items || []).map((item) => normalizeItem(item, source.type)).filter((item) => item.id),
+    items,
     hasMore: Boolean(result.data?.hasMore),
-    page
+    supportsSkip: Boolean(result.data?.supportsSkip),
+    skipStep: Number(result.data?.skipStep || skipStep),
+    page,
+    nextSkip: Number.isFinite(reportedNextSkip)
+      ? Math.max(0, Math.trunc(reportedNextSkip))
+      : skip + items.length
   };
 }
 
@@ -377,26 +529,40 @@ function setTmdbDiscoverParam(params, key, value) {
 function applyTmdbDiscoverFilters(params, filters = {}, mediaType = "movie") {
   const isTv = String(mediaType || "").toLowerCase() === "tv";
   setTmdbDiscoverParam(params, "with_genres", filters.withGenres);
-  setTmdbDiscoverParam(params, isTv ? "first_air_date.gte" : "primary_release_date.gte", filters.releaseDateGte);
-  setTmdbDiscoverParam(params, isTv ? "first_air_date.lte" : "primary_release_date.lte", filters.releaseDateLte);
+  setTmdbDiscoverParam(params, "without_genres", filters.withoutGenres);
+  setTmdbDiscoverParam(
+    params,
+    isTv ? "first_air_date.gte" : "primary_release_date.gte",
+    filters.releaseDateGte
+  );
+  setTmdbDiscoverParam(
+    params,
+    isTv ? "first_air_date.lte" : "primary_release_date.lte",
+    filters.releaseDateLte
+  );
   setTmdbDiscoverParam(params, "vote_average.gte", filters.voteAverageGte);
   setTmdbDiscoverParam(params, "vote_average.lte", filters.voteAverageLte);
   setTmdbDiscoverParam(params, "vote_count.gte", filters.voteCountGte);
   setTmdbDiscoverParam(params, "with_original_language", filters.withOriginalLanguage);
   setTmdbDiscoverParam(params, "with_origin_country", filters.withOriginCountry);
   setTmdbDiscoverParam(params, "with_keywords", filters.withKeywords);
+  setTmdbDiscoverParam(params, "without_keywords", filters.withoutKeywords);
   setTmdbDiscoverParam(params, "with_companies", filters.withCompanies);
+  setTmdbDiscoverParam(params, "without_companies", filters.withoutCompanies);
   if (isTv) {
     setTmdbDiscoverParam(params, "with_networks", filters.withNetworks);
   }
   if (Number.isFinite(Number(filters.year)) && Number(filters.year) > 0) {
     params.set(isTv ? "first_air_date_year" : "year", String(Math.trunc(Number(filters.year))));
   }
-  if (filters.withWatchProviders) {
+  if (filters.withWatchProviders || filters.withoutWatchProviders) {
     setTmdbDiscoverParam(params, "watch_region", filters.watchRegion || "US");
+  }
+  if (filters.withWatchProviders) {
     setTmdbDiscoverParam(params, "with_watch_providers", filters.withWatchProviders);
     setTmdbDiscoverParam(params, "with_watch_monetization_types", "flatrate|free|ads|rent|buy");
   }
+  setTmdbDiscoverParam(params, "without_watch_providers", filters.withoutWatchProviders);
 }
 
 function mapTmdbListItem(item = {}, mediaType = "movie") {
@@ -407,21 +573,24 @@ function mapTmdbListItem(item = {}, mediaType = "movie") {
   }
   const posterUrl = toImageUrl(item.poster_path || item.posterPath, "poster");
   const backdropUrl = toImageUrl(item.backdrop_path || item.backdropPath, "backdrop");
-  return normalizeItem({
-    id: `tmdb:${item.id}`,
-    type,
-    name: title,
-    poster: firstNonEmpty(posterUrl, backdropUrl, buildPlaceholderPosterDataUrl()),
-    landscapePoster: backdropUrl,
-    background: backdropUrl,
-    description: firstNonEmpty(item.overview, item.description),
-    releaseInfo: String(item.release_date || item.first_air_date || "").slice(0, 4),
-    released: item.release_date || item.first_air_date || "",
-    releaseDate: item.release_date || item.first_air_date || "",
-    rating: typeof item.vote_average === "number" ? item.vote_average : null,
-    imdbRating: typeof item.vote_average === "number" ? item.vote_average : null,
-    tmdbId: String(item.id)
-  }, type);
+  return normalizeItem(
+    {
+      id: `tmdb:${item.id}`,
+      type,
+      name: title,
+      poster: firstNonEmpty(posterUrl, backdropUrl, buildPlaceholderPosterDataUrl()),
+      landscapePoster: backdropUrl,
+      background: backdropUrl,
+      description: firstNonEmpty(item.overview, item.description),
+      releaseInfo: String(item.release_date || item.first_air_date || "").slice(0, 4),
+      released: item.release_date || item.first_air_date || "",
+      releaseDate: item.release_date || item.first_air_date || "",
+      rating: typeof item.vote_average === "number" ? item.vote_average : null,
+      imdbRating: typeof item.vote_average === "number" ? item.vote_average : null,
+      tmdbId: String(item.id)
+    },
+    type
+  );
 }
 
 function hasTmdbItemId(item = {}) {
@@ -433,25 +602,47 @@ function hasTmdbItemId(item = {}) {
 function buildEnrichedTmdbItem(baseItem = {}, enriched = {}, settings = {}) {
   const useArtwork = settings.useArtwork !== false;
   const useBasicInfo = settings.useBasicInfo !== false;
-  return normalizeItem({
-    ...baseItem,
-    name: useBasicInfo ? firstNonEmpty(enriched.localizedTitle, baseItem.name) : baseItem.name,
-    description: useBasicInfo ? firstNonEmpty(enriched.description, baseItem.description) : baseItem.description,
-    background: useArtwork ? firstNonEmpty(enriched.backdrop, baseItem.background) : baseItem.background,
-    backdrop: useArtwork ? firstNonEmpty(enriched.backdrop, baseItem.backdrop) : baseItem.backdrop,
-    landscapePoster: useArtwork ? firstNonEmpty(enriched.backdrop, baseItem.landscapePoster) : baseItem.landscapePoster,
-    poster: useArtwork ? firstNonEmpty(enriched.poster, baseItem.poster) : baseItem.poster,
-    logo: useArtwork ? enriched.logo : baseItem.logo,
-    genres: useBasicInfo && Array.isArray(enriched.genres) && enriched.genres.length ? enriched.genres : baseItem.genres,
-    releaseInfo: useBasicInfo ? firstNonEmpty(enriched.releaseInfo, baseItem.releaseInfo) : baseItem.releaseInfo,
-    released: useBasicInfo ? firstNonEmpty(enriched.released, baseItem.released) : baseItem.released,
-    releaseDate: useBasicInfo ? firstNonEmpty(enriched.released, baseItem.releaseDate) : baseItem.releaseDate,
-    runtime: useBasicInfo ? firstNonEmpty(enriched.runtime, baseItem.runtime) : baseItem.runtime,
-    rating: useBasicInfo ? (enriched.rating ?? baseItem.rating) : baseItem.rating,
-    imdbRating: useBasicInfo ? (enriched.rating ?? baseItem.imdbRating) : baseItem.imdbRating,
-    language: useBasicInfo ? firstNonEmpty(enriched.language, baseItem.language) : baseItem.language,
-    country: useBasicInfo ? firstNonEmpty(enriched.country, baseItem.country) : baseItem.country
-  }, baseItem.type || baseItem.apiType || "movie");
+  return normalizeItem(
+    {
+      ...baseItem,
+      name: useBasicInfo ? firstNonEmpty(enriched.localizedTitle, baseItem.name) : baseItem.name,
+      description: useBasicInfo
+        ? firstNonEmpty(enriched.description, baseItem.description)
+        : baseItem.description,
+      background: useArtwork
+        ? firstNonEmpty(enriched.backdrop, baseItem.background)
+        : baseItem.background,
+      backdrop: useArtwork
+        ? firstNonEmpty(enriched.backdrop, baseItem.backdrop)
+        : baseItem.backdrop,
+      landscapePoster: useArtwork
+        ? firstNonEmpty(enriched.backdrop, baseItem.landscapePoster)
+        : baseItem.landscapePoster,
+      poster: useArtwork ? firstNonEmpty(enriched.poster, baseItem.poster) : baseItem.poster,
+      logo: useArtwork ? enriched.logo : baseItem.logo,
+      genres:
+        useBasicInfo && Array.isArray(enriched.genres) && enriched.genres.length
+          ? enriched.genres
+          : baseItem.genres,
+      releaseInfo: useBasicInfo
+        ? firstNonEmpty(enriched.releaseInfo, baseItem.releaseInfo)
+        : baseItem.releaseInfo,
+      released: useBasicInfo
+        ? firstNonEmpty(enriched.released, baseItem.released)
+        : baseItem.released,
+      releaseDate: useBasicInfo
+        ? firstNonEmpty(enriched.released, baseItem.releaseDate)
+        : baseItem.releaseDate,
+      runtime: useBasicInfo ? firstNonEmpty(enriched.runtime, baseItem.runtime) : baseItem.runtime,
+      rating: useBasicInfo ? (enriched.rating ?? baseItem.rating) : baseItem.rating,
+      imdbRating: useBasicInfo ? (enriched.rating ?? baseItem.imdbRating) : baseItem.imdbRating,
+      language: useBasicInfo
+        ? firstNonEmpty(enriched.language, baseItem.language)
+        : baseItem.language,
+      country: useBasicInfo ? firstNonEmpty(enriched.country, baseItem.country) : baseItem.country
+    },
+    baseItem.type || baseItem.apiType || "movie"
+  );
 }
 
 async function fetchTmdbSourceItems(source = {}, page = 1) {
@@ -461,7 +652,10 @@ async function fetchTmdbSourceItems(source = {}, page = 1) {
   }
   const language = getTmdbLanguage();
   const type = String(source.tmdbSourceType || "").toUpperCase();
-  const mediaType = type === "NETWORK" || String(source.mediaType || "MOVIE").toUpperCase() === "TV" ? "tv" : "movie";
+  const mediaType =
+    type === "NETWORK" || String(source.mediaType || "MOVIE").toUpperCase() === "TV"
+      ? "tv"
+      : "movie";
   if (type === "COLLECTION") {
     const items = await TmdbMetadataService.fetchMovieCollection({
       collectionId: source.tmdbId,
@@ -477,7 +671,9 @@ async function fetchTmdbSourceItems(source = {}, page = 1) {
     const url = `${TMDB_API_URL}/list/${encodeURIComponent(String(source.tmdbId || ""))}?api_key=${encodeURIComponent(apiKey)}&language=${encodeURIComponent(language)}&page=${encodeURIComponent(String(page))}`;
     const { payload } = await fetchJson(url);
     return {
-      items: (Array.isArray(payload?.items) ? payload.items : []).map((item) => mapTmdbListItem(item, String(item?.media_type || mediaType))).filter(Boolean),
+      items: (Array.isArray(payload?.items) ? payload.items : [])
+        .map((item) => mapTmdbListItem(item, String(item?.media_type || mediaType)))
+        .filter(Boolean),
       hasMore: Number(payload?.page || page) < Number(payload?.total_pages || page),
       page: Number(payload?.page || page)
     };
@@ -485,11 +681,18 @@ async function fetchTmdbSourceItems(source = {}, page = 1) {
   if (type === "PERSON" || type === "DIRECTOR") {
     const url = `${TMDB_API_URL}/person/${encodeURIComponent(String(source.tmdbId || ""))}/combined_credits?api_key=${encodeURIComponent(apiKey)}&language=${encodeURIComponent(language)}`;
     const { payload } = await fetchJson(url);
-    const sourceItems = type === "DIRECTOR"
-      ? (Array.isArray(payload?.crew) ? payload.crew.filter((entry) => String(entry?.job || "").toLowerCase() === "director") : [])
-      : (Array.isArray(payload?.cast) ? payload.cast : []);
+    const sourceItems =
+      type === "DIRECTOR"
+        ? Array.isArray(payload?.crew)
+          ? payload.crew.filter((entry) => String(entry?.job || "").toLowerCase() === "director")
+          : []
+        : Array.isArray(payload?.cast)
+          ? payload.cast
+          : [];
     return {
-      items: sourceItems.map((item) => mapTmdbListItem(item, String(item?.media_type || mediaType))).filter(Boolean),
+      items: sourceItems
+        .map((item) => mapTmdbListItem(item, String(item?.media_type || mediaType)))
+        .filter(Boolean),
       hasMore: false,
       page: 1
     };
@@ -498,7 +701,9 @@ async function fetchTmdbSourceItems(source = {}, page = 1) {
     api_key: apiKey,
     language,
     page: String(page),
-    sort_by: String(source.sortBy || (mediaType === "tv" ? "first_air_date.desc" : "popularity.desc"))
+    sort_by: String(
+      source.sortBy || (mediaType === "tv" ? "first_air_date.desc" : "popularity.desc")
+    )
   });
   const filters = source.filters && typeof source.filters === "object" ? source.filters : {};
   applyTmdbDiscoverFilters(params, filters, mediaType);
@@ -507,13 +712,18 @@ async function fetchTmdbSourceItems(source = {}, page = 1) {
   }
   if (type === "NETWORK" && source.tmdbId) {
     params.set("with_networks", String(source.tmdbId));
-    params.set("first_air_date.lte", filters.releaseDateLte || new Date().toISOString().slice(0, 10));
+    params.set(
+      "first_air_date.lte",
+      filters.releaseDateLte || new Date().toISOString().slice(0, 10)
+    );
     params.set("with_status", "0|3|4");
   }
   const url = `${TMDB_API_URL}/discover/${mediaType}?${params.toString()}`;
   const { payload } = await fetchJson(url);
   return {
-    items: (Array.isArray(payload?.results) ? payload.results : []).map((item) => mapTmdbListItem(item, mediaType)).filter(Boolean),
+    items: (Array.isArray(payload?.results) ? payload.results : [])
+      .map((item) => mapTmdbListItem(item, mediaType))
+      .filter(Boolean),
     hasMore: Number(payload?.page || page) < Number(payload?.total_pages || page),
     page: Number(payload?.page || page)
   };
@@ -537,25 +747,45 @@ function mapTraktEntity(entity = {}, type = "movie") {
   if (!title) {
     return null;
   }
-  const id = firstNonEmpty(ids?.imdb, ids?.slug ? `${type}:${ids.slug}` : "", ids?.trakt ? `trakt:${ids.trakt}` : "");
+  const id = firstNonEmpty(
+    ids?.imdb,
+    ids?.slug ? `${type}:${ids.slug}` : "",
+    ids?.trakt ? `trakt:${ids.trakt}` : ""
+  );
   if (!id) {
     return null;
   }
   const normalizedType = type === "show" ? "series" : "movie";
-  return normalizeItem({
-    id,
-    type: normalizedType,
-    name: title,
-    poster: firstNonEmpty(entity?.images?.poster?.[0], entity?.images?.poster, entity?.images?.posters?.[0]),
-    background: firstNonEmpty(entity?.images?.fanart?.[0], entity?.images?.background, entity?.images?.backdrop?.[0]),
-    releaseInfo: String(entity?.year || entity?.released || entity?.first_aired || "").slice(0, 4),
-    logo: firstNonEmpty(entity?.images?.logo?.[0])
-  }, normalizedType);
+  return normalizeItem(
+    {
+      id,
+      type: normalizedType,
+      name: title,
+      poster: bestTraktImage(entity?.images, "poster", "posters", "fanart"),
+      background: bestTraktImage(
+        entity?.images,
+        "fanart",
+        "background",
+        "backdrop",
+        "banner",
+        "thumb",
+        "poster"
+      ),
+      releaseInfo: String(entity?.year || entity?.released || entity?.first_aired || "").slice(
+        0,
+        4
+      ),
+      logo: bestTraktImage(entity?.images, "logo", "clearart")
+    },
+    normalizedType
+  );
 }
 
 async function fetchTraktSourceItems(source = {}, page = 1) {
   const mediaType = String(source.mediaType || "MOVIE").toUpperCase() === "TV" ? "show" : "movie";
-  const url = new URL(`${String(TRAKT_API_URL || "https://api.trakt.tv").replace(/\/+$/, "")}/lists/${encodeURIComponent(String(source.traktListId || ""))}/items/${mediaType}`);
+  const url = new URL(
+    `${String(TRAKT_API_URL || "https://api.trakt.tv").replace(/\/+$/, "")}/lists/${encodeURIComponent(String(source.traktListId || ""))}/items/${mediaType}`
+  );
   url.searchParams.set("page", String(page));
   url.searchParams.set("limit", String(TRAKT_PAGE_SIZE));
   url.searchParams.set("sort_by", String(source.sortBy || "rank"));
@@ -563,14 +793,20 @@ async function fetchTraktSourceItems(source = {}, page = 1) {
   const response = await fetch(url.toString(), { headers: buildTraktHeaders() });
   const payload = await response.json().catch(() => []);
   if (!response.ok) {
-    throw new Error(String(payload?.message || payload?.error || response.statusText || "Could not load Trakt list"));
+    throw new Error(
+      String(
+        payload?.message || payload?.error || response.statusText || "Could not load Trakt list"
+      )
+    );
   }
   const pageCount = Number(response.headers.get("X-Pagination-Page-Count") || page);
-  const items = (Array.isArray(payload) ? payload : []).map((entry) => {
-    return mediaType === "show"
-      ? mapTraktEntity(entry?.show || null, "show")
-      : mapTraktEntity(entry?.movie || null, "movie");
-  }).filter(Boolean);
+  const items = (Array.isArray(payload) ? payload : [])
+    .map((entry) => {
+      return mediaType === "show"
+        ? mapTraktEntity(entry?.show || null, "show")
+        : mapTraktEntity(entry?.movie || null, "movie");
+    })
+    .filter(Boolean);
   return {
     items,
     hasMore: page < pageCount && items.length > 0,
@@ -578,7 +814,7 @@ async function fetchTraktSourceItems(source = {}, page = 1) {
   };
 }
 
-async function fetchSourceItems(source = {}, page = 1) {
+async function fetchSourceItems(source = {}, page = 1, skipOverride = null) {
   const provider = String(source.provider || "addon").toLowerCase();
   if (provider === "tmdb") {
     return fetchTmdbSourceItems(source, page);
@@ -586,7 +822,7 @@ async function fetchSourceItems(source = {}, page = 1) {
   if (provider === "trakt") {
     return fetchTraktSourceItems(source, page);
   }
-  return fetchAddonSourceItems(source, page);
+  return fetchAddonSourceItems(source, page, skipOverride);
 }
 
 export const FolderDetailScreen = {
@@ -597,6 +833,26 @@ export const FolderDetailScreen = {
       return null;
     }
     return `folderDetail:${collectionId}:${folderId}`;
+  },
+
+  cancelScheduledRender() {
+    if (this.folderDetailRenderTimer) {
+      clearTimeout(this.folderDetailRenderTimer);
+      this.folderDetailRenderTimer = null;
+    }
+  },
+
+  scheduleRender() {
+    if (this.folderDetailRenderTimer || !this.container || Router.getCurrent() !== "folderDetail") {
+      return;
+    }
+    this.folderDetailRenderTimer = setTimeout(() => {
+      this.folderDetailRenderTimer = null;
+      if (!this.container || Router.getCurrent() !== "folderDetail") {
+        return;
+      }
+      this.render();
+    }, FOLDER_SOURCE_RENDER_BATCH_MS);
   },
 
   captureRouteState() {
@@ -680,6 +936,14 @@ export const FolderDetailScreen = {
             items: Array.isArray(restored.items) ? [...restored.items] : [],
             hasMore: Boolean(restored.hasMore),
             page: Math.max(1, Number(restored.page || 1)),
+            nextSkip: Number.isFinite(Number(restored.nextSkip))
+              ? Math.max(0, Math.trunc(Number(restored.nextSkip)))
+              : Math.max(
+                  0,
+                  (Math.max(1, Number(restored.page || 1)) - 1) *
+                    Number(restored.skipStep || tab.skipStep || 100)
+                ),
+            skipStep: Number(restored.skipStep || tab.skipStep || 100),
             loading: false,
             error: String(restored.error || ""),
             restoreNeedsReload: Boolean(restored.restoreNeedsReload)
@@ -687,31 +951,39 @@ export const FolderDetailScreen = {
         : tab;
     });
     this.sourceTabs = this.tabs.filter((tab) => !tab.isAllTab);
-    this.selectedTabIndex = Math.min(
-      this.selectedTabIndex,
-      Math.max(0, this.tabs.length - 1)
-    );
+    this.selectedTabIndex = Math.min(this.selectedTabIndex, Math.max(0, this.tabs.length - 1));
     return true;
   },
 
   async mount(params = {}, navigationContext = {}) {
     this.container = document.getElementById("folderDetail");
+    this.cancelScheduledRender();
     ScreenUtils.show(this.container);
     this.params = params || {};
     this.layoutPrefs = LayoutPreferences.get();
-    this.collection = CollectionsStore.get().find((entry) => String(entry?.id || "") === String(this.params.collectionId || "")) || null;
-    this.folder = this.collection?.folders?.find((entry) => String(entry?.id || "") === String(this.params.folderId || "")) || null;
+    this.collection =
+      CollectionsStore.get().find(
+        (entry) => String(entry?.id || "") === String(this.params.collectionId || "")
+      ) || null;
+    this.folder =
+      this.collection?.folders?.find(
+        (entry) => String(entry?.id || "") === String(this.params.folderId || "")
+      ) || null;
     this.selectedTabIndex = 0;
     this.lastFocusedKey = "tab:0";
     this.savedScrollTop = 0;
     this.restoredTrackScrollStates = {};
     this.restoredFollowLayoutFocusState = null;
     this.restoredFocusedItem = null;
+    this.isRestoringFocusFromBack = false;
+    this.homeHoldFocusLocked = false;
+    this.lastMainFocus = null;
     this.navModel = { rows: [] };
     this.tabs = [];
     const preferredHomeLayout = String(this.layoutPrefs?.homeLayout || "classic").toLowerCase();
     this.viewMode = String(this.collection?.viewMode || "TABBED_GRID").toUpperCase();
-    this.useHomeFollowLayout = this.viewMode === "FOLLOW_LAYOUT" || preferredHomeLayout === "modern";
+    this.useHomeFollowLayout =
+      this.viewMode === "FOLLOW_LAYOUT" || preferredHomeLayout === "modern";
     this.folderRouteEnterPending = true;
     this.heroItem = null;
 
@@ -720,11 +992,15 @@ export const FolderDetailScreen = {
       return;
     }
 
-    this.heroItem = normalizeCollectionFolderItem({
-      ...(this.folder || {}),
-      collectionId: this.collection.id,
-      collectionTitle: this.collection.title
-    }, this.collection) || buildFolderHeroSeed(this.folder);
+    this.heroItem =
+      normalizeCollectionFolderItem(
+        {
+          ...(this.folder || {}),
+          collectionId: this.collection.id,
+          collectionTitle: this.collection.title
+        },
+        this.collection
+      ) || buildFolderHeroSeed(this.folder);
     if (this.useHomeFollowLayout) {
       this.layoutMode = "modern";
       this.layoutPrefs = {
@@ -745,31 +1021,48 @@ export const FolderDetailScreen = {
       watchedItemsRepository.getAll(5000).catch(() => [])
     ]);
     this.watchedTitleIds = buildWatchedTitleIdSet(watchedItems);
-    const folderSources = Array.isArray(this.folder.sources) && this.folder.sources.length
-      ? this.folder.sources
-      : buildFallbackStreamingSources(this.folder);
+    const folderSources =
+      Array.isArray(this.folder.sources) && this.folder.sources.length
+        ? this.folder.sources
+        : buildFallbackStreamingSources(this.folder);
     const sourceTabs = folderSources.map((source, index) => ({
       key: buildFolderSourceKey(source, index),
-      label: source.provider === "tmdb"
-        ? buildTmdbTabLabel(source)
-        : (source.provider === "trakt" ? buildTraktTabLabel(source) : buildAddonTabLabel(source, addons)),
+      label:
+        source.provider === "tmdb"
+          ? buildTmdbTabLabel(source)
+          : source.provider === "trakt"
+            ? buildTraktTabLabel(source)
+            : buildAddonTabLabel(source, addons),
       source,
       items: [],
       hasMore: false,
       page: 1,
+      nextSkip: 0,
+      skipStep: 100,
       loading: false,
       error: ""
     }));
     this.sourceTabs = sourceTabs;
-    this.tabs = (this.collection.showAllTab !== false && sourceTabs.length > 1)
-      ? [{ key: "all", label: "All", isAllTab: true, items: [], hasMore: false, page: 1, loading: true, error: "" }, ...sourceTabs]
-      : sourceTabs;
+    this.tabs =
+      this.collection.showAllTab !== false && sourceTabs.length > 1
+        ? [
+            {
+              key: "all",
+              label: "All",
+              isAllTab: true,
+              items: [],
+              hasMore: false,
+              page: 1,
+              nextSkip: 0,
+              skipStep: 100,
+              loading: true,
+              error: ""
+            },
+            ...sourceTabs
+          ]
+        : sourceTabs;
 
-    const restored = this.hydrateFromRouteState(
-      navigationContext?.restoredState,
-      this.params
-    );
-    this.render();
+    const restored = this.hydrateFromRouteState(navigationContext?.restoredState, this.params);
     const sourceOffset = this.tabs[0]?.isAllTab ? 1 : 0;
     const tabsToLoad = restored
       ? this.tabs
@@ -777,9 +1070,19 @@ export const FolderDetailScreen = {
           .filter(({ tab }) => !tab.isAllTab && tab.restoreNeedsReload)
           .map(({ index }) => index)
       : sourceTabs.map((_, index) => index + sourceOffset);
-    await Promise.all(
-      tabsToLoad.map((index) => this.loadTab(index, { append: false }))
-    );
+    tabsToLoad.forEach((index) => {
+      const tab = this.tabs[index];
+      if (tab && !tab.isAllTab) {
+        this.tabs[index] = { ...tab, loading: true, error: "" };
+      }
+    });
+    this.sourceTabs = this.tabs.filter((tab) => !tab.isAllTab);
+    this.rebuildAllTab();
+    this.render();
+    await Promise.all(tabsToLoad.map((index) => this.loadTab(index, { background: true })));
+    if (tabsToLoad.length && Router.getCurrent() === "folderDetail") {
+      this.render();
+    }
   },
 
   rebuildAllTab() {
@@ -796,18 +1099,21 @@ export const FolderDetailScreen = {
     };
   },
 
-  async loadTab(tabIndex, { append = false } = {}) {
+  async loadTab(tabIndex, { append = false, background = false } = {}) {
     const tab = this.tabs[tabIndex];
-    if (!tab || tab.isAllTab || tab.loading) {
+    if (!tab || tab.isAllTab || (tab.loading && !background)) {
       return;
     }
-    this.tabs[tabIndex] = { ...tab, loading: true, error: "" };
-    this.rebuildAllTab();
-    this.render();
+    if (!background) {
+      this.tabs[tabIndex] = { ...tab, loading: true, error: "" };
+      this.rebuildAllTab();
+      this.render();
+    }
     try {
       const nextPage = append ? Math.max(1, Number(tab.page || 1) + 1) : 1;
-      const result = await fetchSourceItems(tab.source, nextPage);
-      const existing = append ? (this.tabs[tabIndex].items || []) : [];
+      const requestSkip = append ? Number(tab.nextSkip || 0) : 0;
+      const result = await fetchSourceItems(tab.source, nextPage, requestSkip);
+      const existing = append ? this.tabs[tabIndex].items || [] : [];
       const seen = new Set(existing.map((item) => `${item.type}:${item.id}`));
       const incoming = (result.items || []).filter((item) => {
         const key = `${item.type}:${item.id}`;
@@ -821,7 +1127,14 @@ export const FolderDetailScreen = {
         ...this.tabs[tabIndex],
         items: append ? [...existing, ...incoming] : incoming,
         hasMore: Boolean(result.hasMore && incoming.length),
+        supportsSkip: result.supportsSkip !== false,
+        skipStep: Number(result.skipStep || this.tabs[tabIndex].skipStep || 100),
         page: Number(result.page || nextPage),
+        nextSkip: Number.isFinite(Number(result.nextSkip))
+          ? Math.max(0, Math.trunc(Number(result.nextSkip)))
+          : append
+            ? Number(this.tabs[tabIndex].nextSkip || 0)
+            : 0,
         loading: false,
         error: ""
       };
@@ -836,7 +1149,11 @@ export const FolderDetailScreen = {
       };
     }
     this.rebuildAllTab();
-    this.render();
+    if (background) {
+      this.scheduleRender();
+    } else {
+      this.render();
+    }
   },
 
   getSelectedTab() {
@@ -849,11 +1166,15 @@ export const FolderDetailScreen = {
     }
     const rows = [];
     if (this.viewMode === "TABBED_GRID") {
-      const tabNodes = Array.from(this.container?.querySelectorAll(".folder-detail-tab.focusable") || []);
+      const tabNodes = Array.from(
+        this.container?.querySelectorAll(".folder-detail-tab.focusable") || []
+      );
       if (tabNodes.length) {
         rows.push(tabNodes);
       }
-      const cardNodes = Array.from(this.container?.querySelectorAll(".seeall-card.focusable") || []);
+      const cardNodes = Array.from(
+        this.container?.querySelectorAll(".seeall-card.focusable") || []
+      );
       groupNodesByOffsetTop(cardNodes).forEach((rowNodes) => {
         if (rowNodes.length) {
           rows.push(rowNodes);
@@ -897,7 +1218,10 @@ export const FolderDetailScreen = {
         type: target.dataset.itemType || "movie",
         name: target.dataset.itemTitle || "Untitled",
         poster: target.querySelector(".seeall-card-poster-image")?.getAttribute("src") || "",
-        background: target.dataset.backdropSrc || target.querySelector(".seeall-card-poster-image")?.getAttribute("src") || "",
+        background:
+          target.dataset.backdropSrc ||
+          target.querySelector(".seeall-card-poster-image")?.getAttribute("src") ||
+          "",
         logo: target.dataset.logoSrc || "",
         releaseInfo: target.dataset.releaseInfo || "",
         description: target.dataset.description || ""
@@ -993,7 +1317,7 @@ export const FolderDetailScreen = {
       }
       if (
         this.restoredFollowLayoutFocusState &&
-        HomeScreen.restoreFocusState.call(this, this.restoredFollowLayoutFocusState)
+        HomeScreen.restoreModernFocusState.call(this, this.restoredFollowLayoutFocusState)
       ) {
         this.restoredFollowLayoutFocusState = null;
         return;
@@ -1007,13 +1331,14 @@ export const FolderDetailScreen = {
       }
       return;
     }
-    const target = this.findRestoredFocusedItem()
-      || (this.lastFocusedKey
-      ? this.container?.querySelector(`.focusable[data-focus-key="${this.lastFocusedKey}"]`)
-      : null)
-      || this.container?.querySelector(".folder-detail-tab.focusable")
-      || this.container?.querySelector(".seeall-card.focusable")
-      || null;
+    const target =
+      this.findRestoredFocusedItem() ||
+      (this.lastFocusedKey
+        ? this.container?.querySelector(`.focusable[data-focus-key="${this.lastFocusedKey}"]`)
+        : null) ||
+      this.container?.querySelector(".folder-detail-tab.focusable") ||
+      this.container?.querySelector(".seeall-card.focusable") ||
+      null;
     if (!target) {
       return;
     }
@@ -1046,8 +1371,7 @@ export const FolderDetailScreen = {
     ).filter(
       (node) =>
         String(node.dataset.itemId || "") === descriptor.itemId &&
-        (!descriptor.itemType ||
-          String(node.dataset.itemType || "") === descriptor.itemType)
+        (!descriptor.itemType || String(node.dataset.itemType || "") === descriptor.itemType)
     );
     if (!candidates.length) {
       return null;
@@ -1055,8 +1379,7 @@ export const FolderDetailScreen = {
     if (descriptor.rowKey) {
       const sameRow = candidates.find(
         (node) =>
-          String(node.closest("[data-row-key]")?.dataset?.rowKey || "") ===
-          descriptor.rowKey
+          String(node.closest("[data-row-key]")?.dataset?.rowKey || "") === descriptor.rowKey
       );
       if (sameRow) {
         return sameRow;
@@ -1066,20 +1389,25 @@ export const FolderDetailScreen = {
   },
 
   render() {
+    this.cancelScheduledRender();
     if (this.useHomeFollowLayout) {
       this.renderFollowLayout();
       return;
     }
     const enterClass = this.folderRouteEnterPending ? " nuvio-route-slide-enter" : "";
     this.folderRouteEnterPending = false;
-    const sourceRows = this.viewMode === "TABBED_GRID"
-      ? (this.sourceTabs || [])
-      : this.tabs.filter((tab) => !tab.isAllTab);
-    const heroDisplay = buildHeroDisplay(this.heroItem) || buildHeroDisplay(buildFolderHeroSeed(this.folder));
+    const sourceRows =
+      this.viewMode === "TABBED_GRID"
+        ? this.sourceTabs || []
+        : this.tabs.filter((tab) => !tab.isAllTab);
+    const heroDisplay =
+      buildHeroDisplay(this.heroItem) || buildHeroDisplay(buildFolderHeroSeed(this.folder));
     const selectedTab = this.getSelectedTab();
     const items = selectedTab?.items || [];
     const cards = items.length
-      ? items.map((item, index) => `
+      ? items
+          .map(
+            (item, index) => `
           <article class="seeall-card focusable"
                    data-action="openDetail"
                    data-item-id="${escapeHtml(item.id || "")}" 
@@ -1094,24 +1422,35 @@ export const FolderDetailScreen = {
                    data-focus-key="item:${escapeHtml(item.id || index)}"
                    data-item-index="${index}">
             <div class="seeall-card-poster-wrap">
-              ${item.poster
-                ? `<img class="seeall-card-poster-image" src="${escapeHtml(item.poster)}" alt="${escapeHtml(item.name || "content")}" loading="lazy" decoding="async" />`
-                : `<div class="seeall-card-poster placeholder"></div>`}
+              ${
+                item.poster
+                  ? `<img class="seeall-card-poster-image" src="${escapeHtml(item.poster)}" alt="${escapeHtml(item.name || "content")}" loading="${folderPosterLoadingMode()}" decoding="async" />`
+                  : `<div class="seeall-card-poster placeholder"></div>`
+              }
               ${isTitleItemWatched(item, this.watchedTitleIds) ? renderTitleWatchedBadge() : ""}
             </div>
-            ${this.layoutPrefs?.posterLabelsEnabled !== false ? `
+            ${
+              this.layoutPrefs?.posterLabelsEnabled !== false
+                ? `
               <div class="seeall-card-title">${escapeHtml(item.name || "Untitled")}</div>
               <div class="seeall-card-year">${escapeHtml(item.releaseInfo || "")}</div>
-            ` : ""}
+            `
+                : ""
+            }
           </article>
-        `).join("")
+        `
+          )
+          .join("")
       : `<div class="seeall-empty">${escapeFolderHtml(selectedTab?.error || "No items available.")}</div>`;
 
-    const rowsMarkup = sourceRows.map((tab, index) => {
-      const mediaTypeLabel =
-        sourceType(tab.source || {}) === "series" ? "Series" : "Movie";
-      const rowTitle = tab.label !== mediaTypeLabel ? `${tab.label} - ${mediaTypeLabel}` : tab.label;
-      const rowCards = (tab.items || []).map((item, itemIndex) => `
+    const rowsMarkup = sourceRows
+      .map((tab, index) => {
+        const mediaTypeLabel = sourceType(tab.source || {}) === "series" ? "Series" : "Movie";
+        const rowTitle =
+          tab.label !== mediaTypeLabel ? `${tab.label} - ${mediaTypeLabel}` : tab.label;
+        const rowCards = (tab.items || [])
+          .map(
+            (item, itemIndex) => `
         <article class="seeall-card focusable"
                  data-action="openDetail"
                  data-item-id="${escapeHtml(item.id || "")}" 
@@ -1129,27 +1468,38 @@ export const FolderDetailScreen = {
                  data-focus-key="row:${index}:item:${escapeHtml(item.id || itemIndex)}"
                  data-item-index="${itemIndex}">
           <div class="seeall-card-poster-wrap">
-            ${item.poster
-              ? `<img class="seeall-card-poster-image" src="${escapeHtml(item.poster)}" alt="${escapeHtml(item.name || "content")}" loading="lazy" decoding="async" />`
-              : `<div class="seeall-card-poster placeholder"></div>`}
+            ${
+              item.poster
+                ? `<img class="seeall-card-poster-image" src="${escapeHtml(item.poster)}" alt="${escapeHtml(item.name || "content")}" loading="${folderPosterLoadingMode()}" decoding="async" />`
+                : `<div class="seeall-card-poster placeholder"></div>`
+            }
             ${isTitleItemWatched(item, this.watchedTitleIds) ? renderTitleWatchedBadge() : ""}
           </div>
-          ${this.layoutPrefs?.posterLabelsEnabled !== false ? `
+          ${
+            this.layoutPrefs?.posterLabelsEnabled !== false
+              ? `
             <div class="seeall-card-title">${escapeHtml(item.name || "Untitled")}</div>
             <div class="seeall-card-year">${escapeHtml(item.releaseInfo || "")}</div>
-          ` : ""}
+          `
+              : ""
+          }
         </article>
-      `).join("");
-      const loading = tab.loading
-        ? `
+      `
+          )
+          .join("");
+        const loading = tab.loading
+          ? `
           <div class="seeall-loading folder-row-loading">
             ${renderLoadingIndicator()}
             <span>Loading...</span>
           </div>
         `
-        : "";
-      const error = tab.error && !tab.loading ? `<div class="seeall-empty">${escapeHtml(tab.error)}</div>` : '';
-      return `
+          : "";
+        const error =
+          tab.error && !tab.loading
+            ? `<div class="seeall-empty">${escapeHtml(tab.error)}</div>`
+            : "";
+        return `
         <section class="folder-detail-row">
           <h2 class="folder-detail-row-title">${escapeHtml(rowTitle)}</h2>
           <div class="folder-row-track" data-row-key="${escapeHtml(tab.key)}">
@@ -1159,38 +1509,52 @@ export const FolderDetailScreen = {
           ${loading}
         </section>
       `;
-    }).join("");
+      })
+      .join("");
 
-    this.container.innerHTML = this.viewMode === "TABBED_GRID"
-      ? `
+    this.container.innerHTML =
+      this.viewMode === "TABBED_GRID"
+        ? `
           <div class="seeall-shell folder-detail-shell${enterClass}">
           <header class="seeall-header folder-detail-header">
             <div class="folder-detail-eyebrow">${escapeHtml(this.collection?.title || "Collection")}</div>
             <h2 class="seeall-title">${escapeHtml(this.folder?.title || "Folder")}</h2>
-            ${this.tabs.length > 1 ? `
+            ${
+              this.tabs.length > 1
+                ? `
               <div class="folder-detail-tabs">
-                ${this.tabs.map((tab, index) => `
+                ${this.tabs
+                  .map(
+                    (tab, index) => `
                   <button type="button"
                           class="folder-detail-tab focusable${index === this.selectedTabIndex ? " is-selected" : ""}"
                           data-action="selectTab"
                           data-tab-index="${index}"
                           data-focus-key="tab:${index}">${escapeHtml(tab.label || "Tab")}</button>
-                `).join("")}
+                `
+                  )
+                  .join("")}
               </div>
-            ` : ""}
+            `
+                : ""
+            }
           </header>
           <section class="seeall-grid">
             ${cards}
           </section>
-          ${selectedTab?.loading ? `
+          ${
+            selectedTab?.loading
+              ? `
             <div class="seeall-loading">
               ${renderLoadingIndicator()}
               <span>Loading...</span>
             </div>
-          ` : ""}
+          `
+              : ""
+          }
         </div>
       `
-      : `
+        : `
         <div class="seeall-shell folder-detail-shell folder-detail-follow-layout">
           <section class="folder-follow-hero">
             <div class="folder-follow-hero-media">
@@ -1216,6 +1580,10 @@ export const FolderDetailScreen = {
   },
 
   renderFollowLayout() {
+    this.renderedLayoutMode = "modern";
+    // Catalog sources resolve independently. Preserve the live TV-navigation state
+    // before replacing the layout so an arriving row cannot send focus to the top.
+    const liveFocusState = HomeScreen.captureCurrentContentFocusState.call(this);
     HomeScreen.cancelModernCameraFollow.call(this, { stopAnimations: true });
     HomeScreen.teardownModernTrackScrollPagination.call(this);
     HomeScreen.cancelFocusedPosterFlow.call(this);
@@ -1269,11 +1637,23 @@ export const FolderDetailScreen = {
     HomeScreen.buildNavigationModel.call(this);
     HomeScreen.bindHomeViewportEvents.call(this);
     if (modernLandscapePostersEnabled) {
-      HomeScreen.applyCachedModernLandscapePosterMetrics.call(this, this.container.querySelector(".home-screen-shell.home-modern-landscape-posters"));
+      HomeScreen.applyCachedModernLandscapePosterMetrics.call(
+        this,
+        this.container.querySelector(".home-screen-shell.home-modern-landscape-posters")
+      );
     } else {
-      HomeScreen.applyCachedModernPortraitPosterMetrics.call(this, this.container.querySelector(".home-screen-shell.home-layout-modern:not(.home-modern-landscape-posters)"));
+      HomeScreen.applyCachedModernPortraitPosterMetrics.call(
+        this,
+        this.container.querySelector(
+          ".home-screen-shell.home-layout-modern:not(.home-modern-landscape-posters)"
+        )
+      );
     }
-    this.restoreFocus();
+    const restoredLiveFocus =
+      liveFocusState && HomeScreen.restoreModernFocusState.call(this, liveFocusState);
+    if (!restoredLiveFocus) {
+      this.restoreFocus();
+    }
     this.setupModernTrackScrollPagination();
     HomeScreen.applyHeroToDom.call(this);
     HomeScreen.ensureHomeTruncationObservers.call(this);
@@ -1313,7 +1693,9 @@ export const FolderDetailScreen = {
   },
 
   async loadMoreFollowLayoutRow(rowKey, track) {
-    const rowIndex = (this.rows || []).findIndex((row) => String(row?.homeCatalogKey || "") === String(rowKey || ""));
+    const rowIndex = (this.rows || []).findIndex(
+      (row) => String(row?.homeCatalogKey || "") === String(rowKey || "")
+    );
     const rowData = rowIndex >= 0 ? this.rows[rowIndex] : null;
     const tabIndex = Number(rowData?.folderTabIndex ?? -1);
     const tab = this.tabs?.[tabIndex] || null;
@@ -1325,7 +1707,7 @@ export const FolderDetailScreen = {
     this.tabs[tabIndex] = { ...tab, loading: true, error: "" };
     try {
       const nextPage = Math.max(1, Number(tab.page || 1) + 1);
-      const result = await fetchSourceItems(tab.source, nextPage);
+      const result = await fetchSourceItems(tab.source, nextPage, Number(tab.nextSkip || 0));
       const existing = Array.isArray(tab.items) ? tab.items : [];
       const seen = new Set(existing.map((item) => `${item.type}:${item.id}`));
       const incoming = (result.items || []).filter((item) => {
@@ -1342,7 +1724,12 @@ export const FolderDetailScreen = {
         ...this.tabs[tabIndex],
         items: merged,
         hasMore,
+        supportsSkip: result.supportsSkip !== false,
+        skipStep: Number(result.skipStep || tab.skipStep || 100),
         page: Number(result.page || nextPage),
+        nextSkip: Number.isFinite(Number(result.nextSkip))
+          ? Math.max(0, Math.trunc(Number(result.nextSkip)))
+          : Number(tab.nextSkip || 0),
         loading: false,
         error: ""
       };
@@ -1350,29 +1737,43 @@ export const FolderDetailScreen = {
       if (rowData?.result?.data) {
         rowData.result.data.items = merged;
         rowData.result.data.hasMore = hasMore;
+        rowData.result.data.supportsSkip = result.supportsSkip !== false;
+        rowData.result.data.skipStep = Number(result.skipStep || tab.skipStep || 100);
         rowData.result.data.currentPage = Number(result.page || nextPage);
+        rowData.result.data.nextSkip = Number.isFinite(Number(result.nextSkip))
+          ? Math.max(0, Math.trunc(Number(result.nextSkip)))
+          : Number(tab.nextSkip || 0);
       }
       if (incoming.length && track?.isConnected) {
-        const modernLandscapePostersEnabled = Boolean(this.layoutPrefs?.modernLandscapePostersEnabled);
+        const modernLandscapePostersEnabled = Boolean(
+          this.layoutPrefs?.modernLandscapePostersEnabled
+        );
         const startIndex = existing.length;
-        const newMarkup = incoming.map((item, index) => createPosterCardMarkup(
-          item,
-          rowIndex,
-          startIndex + index,
-          rowData.type || "movie",
-          rowData,
-          false,
-          "modern",
-          false,
-          modernLandscapePostersEnabled,
-          false,
-          this.watchedTitleIds
-        )).join("");
+        const newMarkup = incoming
+          .map((item, index) =>
+            createPosterCardMarkup(
+              item,
+              rowIndex,
+              startIndex + index,
+              rowData.type || "movie",
+              rowData,
+              false,
+              "modern",
+              false,
+              modernLandscapePostersEnabled,
+              false,
+              this.watchedTitleIds
+            )
+          )
+          .join("");
         const fragment = document.createRange().createContextualFragment(newMarkup);
         track.appendChild(fragment);
         ScreenUtils.indexFocusables(track);
         HomeScreen.buildNavigationModel.call(this);
-        this.heroCandidates = [this.heroItem, ...(this.rows || []).flatMap((row) => row?.result?.data?.items || [])].filter((item) => item?.id);
+        this.heroCandidates = [
+          this.heroItem,
+          ...(this.rows || []).flatMap((row) => row?.result?.data?.items || [])
+        ].filter((item) => item?.id);
       }
     } catch (error) {
       this.tabs[tabIndex] = {
@@ -1390,9 +1791,10 @@ export const FolderDetailScreen = {
   },
 
   mergeHeroIntoFolderTabs(itemId, mergedHero) {
-    const mergeItems = (items = []) => (Array.isArray(items) ? items : []).map((item) => {
-      return String(item?.id || "") === String(itemId || "") ? { ...item, ...mergedHero } : item;
-    });
+    const mergeItems = (items = []) =>
+      (Array.isArray(items) ? items : []).map((item) => {
+        return String(item?.id || "") === String(itemId || "") ? { ...item, ...mergedHero } : item;
+      });
     this.tabs = (this.tabs || []).map((tab) => ({
       ...tab,
       items: mergeItems(tab.items)
@@ -1407,7 +1809,13 @@ export const FolderDetailScreen = {
     if (!this.useHomeFollowLayout) {
       return;
     }
-    if (!hero || !hero.id || hero.heroSource === "continueWatching" || hero.heroSource === "collection" || hero.heroMetaEnriched) {
+    if (
+      !hero ||
+      !hero.id ||
+      hero.heroSource === "continueWatching" ||
+      hero.heroSource === "collection" ||
+      hero.heroMetaEnriched
+    ) {
       return;
     }
     if (!hasTmdbItemId(hero)) {
@@ -1420,20 +1828,27 @@ export const FolderDetailScreen = {
     const itemId = String(hero.id || "");
     const itemType = String(hero.type || hero.apiType || "movie");
     const deferCommit = Boolean(options?.deferCommit);
-    const token = (this.heroEnrichmentToken = (Number(this.heroEnrichmentToken || 0) + 1));
+    const token = (this.heroEnrichmentToken = Number(this.heroEnrichmentToken || 0) + 1);
     const matchesHero = (candidate) => {
-      return String(candidate?.id || "") === itemId
-        && String(candidate?.type || candidate?.apiType || "movie") === itemType;
+      return (
+        String(candidate?.id || "") === itemId &&
+        String(candidate?.type || candidate?.apiType || "movie") === itemType
+      );
     };
     const canCommitHero = () => {
-      if (Number(this.heroEnrichmentToken) !== token || Number(this.heroFocusToken || 0) !== Number(focusToken || 0)) {
+      if (
+        Number(this.heroEnrichmentToken) !== token ||
+        Number(this.heroFocusToken || 0) !== Number(focusToken || 0)
+      ) {
         return false;
       }
       if (!deferCommit) {
         return matchesHero(this.heroItem);
       }
-      return Router.getCurrent() === "folderDetail"
-        && matchesHero(this.getNodeHeroSource(this.getCurrentFocusedNode()));
+      return (
+        Router.getCurrent() === "folderDetail" &&
+        matchesHero(this.getNodeHeroSource(this.getCurrentFocusedNode()))
+      );
     };
     const commitHero = (resolvedHero, { merge = false } = {}) => {
       if (!canCommitHero()) {
@@ -1469,11 +1884,11 @@ export const FolderDetailScreen = {
       const sourceHero = deferCommit ? hero : this.heroItem;
       const mergedHero = enriched
         ? {
-          ...sourceHero,
-          ...buildEnrichedTmdbItem(sourceHero, enriched, settings),
-          heroMetaEnriched: true,
-          heroMetaEnriching: false
-        }
+            ...sourceHero,
+            ...buildEnrichedTmdbItem(sourceHero, enriched, settings),
+            heroMetaEnriched: true,
+            heroMetaEnriching: false
+          }
         : { ...sourceHero, heroMetaEnriched: true, heroMetaEnriching: false };
       commitHero(mergedHero, { merge: true });
     } catch (_error) {
@@ -1495,7 +1910,9 @@ export const FolderDetailScreen = {
     this.cancelPendingContinueWatchingEnter();
     this.cancelPendingContinueWatchingHold();
     const isPoster = this.isPosterHoldTarget(node);
-    const item = isPoster ? this.getPosterItemFromNode(node) : this.getContinueWatchingItemFromNode(node);
+    const item = isPoster
+      ? this.getPosterItemFromNode(node)
+      : this.getContinueWatchingItemFromNode(node);
     if (isPoster && !item?.id) {
       return false;
     }
@@ -1515,7 +1932,10 @@ export const FolderDetailScreen = {
       if (!pending || Router.getCurrent() !== "folderDetail") {
         return;
       }
-      const current = this.container?.querySelector(".home-continue-card.focusable.focused, .home-poster-card.focusable.focused") || null;
+      const current =
+        this.container?.querySelector(
+          ".home-continue-card.focusable.focused, .home-poster-card.focusable.focused"
+        ) || null;
       if (!this.hasPendingContinueWatchingHold(current)) {
         return;
       }
@@ -1560,9 +1980,7 @@ export const FolderDetailScreen = {
         return;
       }
       if (action === "openDetail") {
-        this.lastFocusedKey = String(
-          current.dataset.focusKey || this.lastFocusedKey || ""
-        );
+        this.lastFocusedKey = String(current.dataset.focusKey || this.lastFocusedKey || "");
         Router.navigate("detail", {
           itemId: current.dataset.itemId || "",
           itemType: current.dataset.itemType || current.dataset.catalogType || "movie",
@@ -1577,12 +1995,16 @@ export const FolderDetailScreen = {
       }
       return;
     }
-    const direction = code === 37 ? -1 : (code === 39 ? 1 : 0);
+    const direction = code === 37 ? -1 : code === 39 ? 1 : 0;
     if (direction !== 0 && current.matches(".folder-detail-tab.focusable")) {
       event?.preventDefault?.();
-      const tabs = Array.from(this.container?.querySelectorAll(".folder-detail-tab.focusable") || []);
+      const tabs = Array.from(
+        this.container?.querySelectorAll(".folder-detail-tab.focusable") || []
+      );
       const currentIndex = tabs.indexOf(current);
-      this.focusNode(tabs[Math.max(0, Math.min(tabs.length - 1, currentIndex + direction))] || current);
+      this.focusNode(
+        tabs[Math.max(0, Math.min(tabs.length - 1, currentIndex + direction))] || current
+      );
       return;
     }
     if (code === 38 || code === 40 || code === 37 || code === 39) {
@@ -1591,29 +2013,43 @@ export const FolderDetailScreen = {
       const col = Number(current.dataset.navCol || 0);
       if (code === 37 || code === 39) {
         const rowNodes = this.navModel.rows[row] || [];
-        this.focusNode(rowNodes[Math.max(0, Math.min(rowNodes.length - 1, col + (code === 39 ? 1 : -1)))] || current);
+        this.focusNode(
+          rowNodes[Math.max(0, Math.min(rowNodes.length - 1, col + (code === 39 ? 1 : -1)))] ||
+            current
+        );
         return;
       }
       const nextRowNodes = this.navModel.rows[row + (code === 40 ? 1 : -1)] || null;
       if (!nextRowNodes?.length) {
         return;
       }
-      this.focusNode(nextRowNodes[Math.max(0, Math.min(nextRowNodes.length - 1, col))] || nextRowNodes[0]);
-      if (this.viewMode === "TABBED_GRID" && code === 40 && this.getSelectedTab()?.hasMore && current.closest(".seeall-grid")) {
+      this.focusNode(
+        nextRowNodes[Math.max(0, Math.min(nextRowNodes.length - 1, col))] || nextRowNodes[0]
+      );
+      if (
+        this.viewMode === "TABBED_GRID" &&
+        code === 40 &&
+        this.getSelectedTab()?.hasMore &&
+        current.closest(".seeall-grid")
+      ) {
         const selectedTabIndex = this.selectedTabIndex;
         if (this.tabs[selectedTabIndex]?.isAllTab) {
-          await Promise.all(this.tabs.slice(1).map((tab, index) => {
-            if (tab.hasMore && !tab.loading) {
-              return this.loadTab(index + 1, { append: true });
-            }
-            return Promise.resolve();
-          }));
+          await Promise.all(
+            this.tabs.slice(1).map((tab, index) => {
+              if (tab.hasMore && !tab.loading) {
+                return this.loadTab(index + 1, { append: true });
+              }
+              return Promise.resolve();
+            })
+          );
         } else if (this.tabs[selectedTabIndex]?.hasMore && !this.tabs[selectedTabIndex]?.loading) {
           await this.loadTab(selectedTabIndex, { append: true });
         }
       } else if (this.viewMode !== "TABBED_GRID" && code === 40) {
         const currentTrack = current.closest(".folder-row-track");
-        const currentRowIndex = Array.from(this.container?.querySelectorAll(".folder-row-track") || []).indexOf(currentTrack);
+        const currentRowIndex = Array.from(
+          this.container?.querySelectorAll(".folder-row-track") || []
+        ).indexOf(currentTrack);
         const rowsForView = this.tabs.filter((tab) => !tab.isAllTab);
         const currentRow = rowsForView[currentRowIndex] || null;
         if (currentRow?.hasMore && !currentRow.loading) {
@@ -1649,6 +2085,7 @@ export const FolderDetailScreen = {
   },
 
   cleanup() {
+    this.cancelScheduledRender();
     if (this.useHomeFollowLayout) {
       HomeScreen.cancelModernCameraFollow.call(this, { stopAnimations: true });
       HomeScreen.stopHeroRotation.call(this);

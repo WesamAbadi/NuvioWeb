@@ -1,6 +1,5 @@
-import { LocalStore } from "../core/storage/localStore.js";
+import { LayoutPreferences } from "../data/local/layoutPreferences.js";
 
-export const ROTATED_DPAD_KEY = "rotatedDpadMapping";
 export const FAST_HORIZONTAL_NAVIGATION_KEY = "fastHorizontalNavigationEnabled";
 
 export function getArrowCodeFromKey(key) {
@@ -21,7 +20,9 @@ function getKeyCodeFromName(keyName) {
     dpad_center: 13,
     center: 13,
     back: 10009,
-    return: 10009,
+    // Samsung TV reports the remote Enter/OK key as keyName "Return".
+    // The actual Back key is exposed as Back/XF86Back (keyCode 10009).
+    return: 13,
     mediaplaypause: 10252,
     mediaplay: 415,
     mediapause: 19,
@@ -77,15 +78,11 @@ function isSimulator() {
 }
 
 export function shouldUseRotatedMapping() {
-  const stored = LocalStore.get(ROTATED_DPAD_KEY, null);
-  if (typeof stored === "boolean") {
-    return stored;
-  }
   return isSimulator();
 }
 
 export function isFastHorizontalNavigationEnabled() {
-  return Boolean(LocalStore.get(FAST_HORIZONTAL_NAVIGATION_KEY, false));
+  return Boolean(LayoutPreferences.get().fastHorizontalNavigationEnabled);
 }
 
 export function normalizeDirectionalKeyCode(code) {
@@ -146,7 +143,7 @@ export function isBackEvent(event, backCodes = [], normalizedCode = null) {
     return false;
   }
 
-  if (keyNameLower === "back" || keyNameLower === "return") {
+  if (keyNameLower === "back") {
     return true;
   }
 

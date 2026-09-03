@@ -43,21 +43,14 @@ function hasActiveModal() {
 }
 
 const BACK_DEBOUNCE_MS = 250;
-const TIZEN_PAIRED_BACK_EVENT_WINDOW_MS = 3000;
-
-function getBackInputChannel(event) {
-  return String(event?.type || "").toLowerCase() === "tizenhwkey"
-    ? "tizenhwkey"
-    : "keydown";
-}
 
 export const FocusEngine = {
   lastBackHandledAt: 0,
-  lastBackHandledChannel: "",
   lastPointerFocusTarget: null,
   pointerMoveFrame: null,
   pendingPointerMoveEvent: null,
   activeKeyDownStartedAt: new Map(),
+  activeBackKeyIdentities: new Set(),
 
   init() {
     this.boundHandleKey = this.handleKey.bind(this);
@@ -82,15 +75,17 @@ export const FocusEngine = {
 
   handleTizenHardwareKey(event) {
     const normalizedEvent = buildNormalizedEvent(event);
-    if (!Platform.isBackEvent({
-      target: normalizedEvent.target,
-      key: normalizedEvent.key,
-      code: normalizedEvent.code,
-      keyName: normalizedEvent.keyName,
-      keyCode: normalizedEvent.keyCode,
-      originalKeyCode: normalizedEvent.originalKeyCode,
-      detail: event?.detail || null
-    })) {
+    if (
+      !Platform.isBackEvent({
+        target: normalizedEvent.target,
+        key: normalizedEvent.key,
+        code: normalizedEvent.code,
+        keyName: normalizedEvent.keyName,
+        keyCode: normalizedEvent.keyCode,
+        originalKeyCode: normalizedEvent.originalKeyCode,
+        detail: event?.detail || null
+      })
+    ) {
       return;
     }
     this.handleBack(event, normalizedEvent);
@@ -99,18 +94,7 @@ export const FocusEngine = {
   handleBack(event, normalizedEvent = buildNormalizedEvent(event)) {
     const now = Date.now();
     const elapsedSinceHandled = now - Number(this.lastBackHandledAt || 0);
-    const inputChannel = getBackInputChannel(event);
-    const isPairedTizenEvent = Boolean(
-      Platform.isTizen() &&
-      this.lastBackHandledChannel &&
-      this.lastBackHandledChannel !== inputChannel &&
-      elapsedSinceHandled < TIZEN_PAIRED_BACK_EVENT_WINDOW_MS
-    );
-    if (
-      normalizedEvent.repeat ||
-      elapsedSinceHandled < BACK_DEBOUNCE_MS ||
-      isPairedTizenEvent
-    ) {
+    if (normalizedEvent.repeat || elapsedSinceHandled < BACK_DEBOUNCE_MS) {
       normalizedEvent.preventDefault();
       normalizedEvent.stopPropagation();
       normalizedEvent.stopImmediatePropagation();
@@ -118,7 +102,6 @@ export const FocusEngine = {
       return;
     }
     this.lastBackHandledAt = now;
-    this.lastBackHandledChannel = inputChannel;
 
     normalizedEvent.preventDefault();
     normalizedEvent.stopPropagation();
@@ -138,6 +121,11 @@ export const FocusEngine = {
       return;
     }
 
+    if (hasActiveModal()) {
+      Router.suppressNextPopstate?.();
+      return;
+    }
+
     Router.back();
   },
 
@@ -152,7 +140,7 @@ export const FocusEngine = {
 
     const normalizedEvent = buildNormalizedEvent(event);
     const keyIdentity = this.getKeyIdentity(normalizedEvent);
-    if (keyIdentity && !this.activeKeyDownStartedAt.has(keyIdentity)) {
+    if (keyIdentity && (!normalizedEvent.repeat || !this.activeKeyDownStartedAt.has(keyIdentity))) {
       this.activeKeyDownStartedAt.set(keyIdentity, Date.now());
     }
 
@@ -166,6 +154,20 @@ export const FocusEngine = {
         originalKeyCode: normalizedEvent.originalKeyCode
       })
     ) {
+      // Samsung TV delivers the mandatory Back key through keydown/keyup. A
+      // held remote key can emit another keydown after the 250 ms timing
+      // debounce, while the first Player -> Sources transition is still
+      // mounting. Treat one keydown/keyup cycle as one Android-style Back
+      // action; a later press is released first and therefore remains valid.
+      const backKeyIdentity = keyIdentity || "back";
+      if (this.activeBackKeyIdentities.has(backKeyIdentity)) {
+        normalizedEvent.preventDefault();
+        normalizedEvent.stopPropagation();
+        normalizedEvent.stopImmediatePropagation();
+        Router.consumeRouteReturnBackGuard?.();
+        return;
+      }
+      this.activeBackKeyIdentities.add(backKeyIdentity);
       this.handleBack(event, normalizedEvent);
       return;
     }
@@ -180,14 +182,28 @@ export const FocusEngine = {
   },
 
   handleKeyUp(event) {
+    const normalizedEvent = buildNormalizedEvent(event);
+    const keyIdentity = this.getKeyIdentity(normalizedEvent);
+    if (
+      Platform.isBackEvent({
+        target: normalizedEvent.target,
+        key: normalizedEvent.key,
+        code: normalizedEvent.code,
+        keyName: normalizedEvent.keyName,
+        keyCode: normalizedEvent.keyCode,
+        originalKeyCode: normalizedEvent.originalKeyCode
+      })
+    ) {
+      this.activeBackKeyIdentities.delete(keyIdentity || "back");
+    }
     if (event?.target && !document.contains(event.target)) return;
-
     if (hasActiveModal()) {
+      if (keyIdentity) {
+        this.activeKeyDownStartedAt.delete(keyIdentity);
+      }
       return;
     }
 
-    const normalizedEvent = buildNormalizedEvent(event);
-    const keyIdentity = this.getKeyIdentity(normalizedEvent);
     if (keyIdentity) {
       const startedAt = Number(this.activeKeyDownStartedAt.get(keyIdentity) || 0);
       normalizedEvent.keyDownDurationMs = startedAt > 0 ? Math.max(0, Date.now() - startedAt) : 0;

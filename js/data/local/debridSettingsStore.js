@@ -226,11 +226,7 @@ function idsFor(items) {
 }
 
 function normalizeStringArray(value, allowedIds = null, fallback = []) {
-  const source = Array.isArray(value)
-    ? value
-    : typeof value === "string"
-      ? value.split(",")
-      : [];
+  const source = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
   const allowed = allowedIds ? new Set(allowedIds) : null;
   const normalized = [];
   source.forEach((entry) => {
@@ -328,8 +324,14 @@ export function normalizeDebridStreamPreferences(value) {
       idsFor(DEBRID_STREAM_QUALITIES),
       DEFAULT_STREAM_PREFERENCES.preferredQualities
     ),
-    requiredQualities: normalizeStringArray(source.requiredQualities, idsFor(DEBRID_STREAM_QUALITIES)),
-    excludedQualities: normalizeStringArray(source.excludedQualities, idsFor(DEBRID_STREAM_QUALITIES)),
+    requiredQualities: normalizeStringArray(
+      source.requiredQualities,
+      idsFor(DEBRID_STREAM_QUALITIES)
+    ),
+    excludedQualities: normalizeStringArray(
+      source.excludedQualities,
+      idsFor(DEBRID_STREAM_QUALITIES)
+    ),
     preferredVisualTags: normalizeStringArray(
       source.preferredVisualTags,
       idsFor(DEBRID_STREAM_VISUAL_TAGS),
@@ -348,8 +350,14 @@ export function normalizeDebridStreamPreferences(value) {
       idsFor(DEBRID_STREAM_AUDIO_TAGS),
       DEFAULT_STREAM_PREFERENCES.preferredAudioTags
     ),
-    requiredAudioTags: normalizeStringArray(source.requiredAudioTags, idsFor(DEBRID_STREAM_AUDIO_TAGS)),
-    excludedAudioTags: normalizeStringArray(source.excludedAudioTags, idsFor(DEBRID_STREAM_AUDIO_TAGS)),
+    requiredAudioTags: normalizeStringArray(
+      source.requiredAudioTags,
+      idsFor(DEBRID_STREAM_AUDIO_TAGS)
+    ),
+    excludedAudioTags: normalizeStringArray(
+      source.excludedAudioTags,
+      idsFor(DEBRID_STREAM_AUDIO_TAGS)
+    ),
     preferredAudioChannels: normalizeStringArray(
       source.preferredAudioChannels,
       idsFor(DEBRID_STREAM_AUDIO_CHANNELS),
@@ -370,9 +378,18 @@ export function normalizeDebridStreamPreferences(value) {
     ),
     requiredEncodes: normalizeStringArray(source.requiredEncodes, idsFor(DEBRID_STREAM_ENCODES)),
     excludedEncodes: normalizeStringArray(source.excludedEncodes, idsFor(DEBRID_STREAM_ENCODES)),
-    preferredLanguages: normalizeStringArray(source.preferredLanguages, idsFor(DEBRID_STREAM_LANGUAGES)),
-    requiredLanguages: normalizeStringArray(source.requiredLanguages, idsFor(DEBRID_STREAM_LANGUAGES)),
-    excludedLanguages: normalizeStringArray(source.excludedLanguages, idsFor(DEBRID_STREAM_LANGUAGES)),
+    preferredLanguages: normalizeStringArray(
+      source.preferredLanguages,
+      idsFor(DEBRID_STREAM_LANGUAGES)
+    ),
+    requiredLanguages: normalizeStringArray(
+      source.requiredLanguages,
+      idsFor(DEBRID_STREAM_LANGUAGES)
+    ),
+    excludedLanguages: normalizeStringArray(
+      source.excludedLanguages,
+      idsFor(DEBRID_STREAM_LANGUAGES)
+    ),
     requiredReleaseGroups: normalizeTextList(source.requiredReleaseGroups),
     excludedReleaseGroups: normalizeTextList(source.excludedReleaseGroups),
     sortCriteria: normalizeSortCriteria(source.sortCriteria)
@@ -503,7 +520,9 @@ export function applyDebridCodecFilter(preferences, filter) {
 }
 
 function normalizePreferredResolverProviderId(source) {
-  const preferred = String(source.preferredResolverProviderId || "").trim().toLowerCase();
+  const preferred = String(source.preferredResolverProviderId || "")
+    .trim()
+    .toLowerCase();
   const connected = [
     ["torbox", source.torboxApiKey],
     ["premiumize", source.premiumizeApiKey],
@@ -538,7 +557,10 @@ function normalizeDebridSettings(value = {}) {
       0,
       Math.min(5, Math.trunc(Number(source.instantPlaybackPreparationLimit || 0)))
     ),
-    streamMaxResults: Math.max(0, Math.min(100, Math.trunc(Number(streamPreferences.maxResults || 0)))),
+    streamMaxResults: Math.max(
+      0,
+      Math.min(100, Math.trunc(Number(streamPreferences.maxResults || 0)))
+    ),
     streamSortMode: legacyModeForSortCriteria(streamPreferences.sortCriteria),
     streamMinimumQuality: normalizeEnum(source.streamMinimumQuality, "streamMinimumQuality"),
     streamDolbyVisionFilter: normalizeEnum(
@@ -549,9 +571,10 @@ function normalizeDebridSettings(value = {}) {
     streamCodecFilter: normalizeEnum(source.streamCodecFilter, "streamCodecFilter"),
     streamBadgesEnabled: source.streamBadgesEnabled !== false,
     streamPreferences,
-    streamNameTemplate: String(
-      source.streamNameTemplate || DEBRID_SETTINGS_DEFAULTS.streamNameTemplate
-    ),
+    streamNameTemplate:
+      source.streamNameTemplate == null
+        ? DEBRID_SETTINGS_DEFAULTS.streamNameTemplate
+        : String(source.streamNameTemplate),
     streamDescriptionTemplate: normalizeStreamDescriptionTemplate(source.streamDescriptionTemplate)
   };
 }
@@ -560,8 +583,61 @@ const store = createProfileScopedStore({
   key: KEY,
   normalize: normalizeDebridSettings
 });
+const settingsListeners = new Set();
+
+function notifySettingsListeners(profileId, settings) {
+  settingsListeners.forEach((listener) => {
+    try {
+      listener(settings, profileId);
+    } catch (error) {
+      console.warn("Debrid settings listener failed", error);
+    }
+  });
+}
+
+function providerApiKeyField(providerId) {
+  const normalizedProviderId = String(providerId || "")
+    .trim()
+    .toLowerCase();
+  return normalizedProviderId === "torbox"
+    ? "torboxApiKey"
+    : normalizedProviderId === "premiumize"
+      ? "premiumizeApiKey"
+      : normalizedProviderId === "realdebrid"
+        ? "realDebridApiKey"
+        : "";
+}
+
+function queueProviderCredentialPush(profileId) {
+  void import("../../core/profile/providerCredentialSyncService.js")
+    .then(({ ProviderCredentialSyncService }) => ProviderCredentialSyncService.queuePush(profileId))
+    .catch((error) => console.warn("Provider credential sync enqueue failed", error));
+}
+
+function credentialSignature(settings = {}) {
+  return JSON.stringify([
+    String(settings.torboxApiKey || ""),
+    String(settings.premiumizeApiKey || ""),
+    String(settings.realDebridApiKey || "")
+  ]);
+}
+
+function queueIfCredentialChanged(profileId, previous, next, options = {}) {
+  if (
+    !options.silentCredentialSync &&
+    credentialSignature(previous) !== credentialSignature(next)
+  ) {
+    queueProviderCredentialPush(profileId);
+  }
+}
 
 export const DebridSettingsStore = {
+  subscribe(listener) {
+    if (typeof listener !== "function") return () => {};
+    settingsListeners.add(listener);
+    return () => settingsListeners.delete(listener);
+  },
+
   getForProfile(profileId) {
     return store.getForProfile(profileId);
   },
@@ -571,31 +647,35 @@ export const DebridSettingsStore = {
   },
 
   replaceForProfile(profileId, nextValue, options = {}) {
-    return store.replaceForProfile(profileId, nextValue, options);
+    const previous = store.getForProfile(profileId);
+    const saved = store.replaceForProfile(profileId, nextValue, options);
+    queueIfCredentialChanged(profileId, previous, saved, options);
+    notifySettingsListeners(profileId, saved);
+    return saved;
   },
 
   setForProfile(profileId, partial, options = {}) {
-    return store.setForProfile(profileId, partial, options);
+    const previous = store.getForProfile(profileId);
+    const saved = store.setForProfile(profileId, partial, options);
+    queueIfCredentialChanged(profileId, previous, saved, options);
+    notifySettingsListeners(profileId, saved);
+    return saved;
   },
 
   set(partial, options = {}) {
-    return store.set(partial, options);
+    return this.setForProfile(options.profileId, partial, options);
   },
 
   setProviderApiKey(providerId, apiKey, options = {}) {
-    const normalizedProviderId = String(providerId || "").trim().toLowerCase();
-    const field =
-      normalizedProviderId === "torbox"
-        ? "torboxApiKey"
-        : normalizedProviderId === "premiumize"
-          ? "premiumizeApiKey"
-          : normalizedProviderId === "realdebrid"
-            ? "realDebridApiKey"
-            : "";
+    return this.setProviderApiKeyForProfile(options.profileId, providerId, apiKey, options);
+  },
+
+  setProviderApiKeyForProfile(profileId, providerId, apiKey, options = {}) {
+    const field = providerApiKeyField(providerId);
     if (!field) {
-      return store.get();
+      return store.getForProfile(profileId);
     }
-    const current = store.get();
+    const current = store.getForProfile(profileId);
     const partial = { [field]: String(apiKey || "").trim() };
     const next = { ...current, ...partial };
     const hasAnyVisibleKey = Boolean(next.torboxApiKey || next.premiumizeApiKey);
@@ -603,7 +683,12 @@ export const DebridSettingsStore = {
       partial.enabled = false;
     }
     partial.preferredResolverProviderId = normalizePreferredResolverProviderId(next);
-    return store.set(partial, options);
+    const saved = store.setForProfile(profileId, partial, options);
+    if (!options.silentCredentialSync && String(current[field] || "") !== partial[field]) {
+      queueProviderCredentialPush(profileId);
+    }
+    notifySettingsListeners(profileId, saved);
+    return saved;
   },
 
   setStreamMaxResults(maxResults, options = {}) {
@@ -646,13 +731,20 @@ export const DebridSettingsStore = {
 
   setStreamHdrFilter(filter, options = {}) {
     const normalizedFilter = normalizeEnum(filter, "streamHdrFilter");
-    const streamPreferences = applyDebridFeatureFilter(store.get().streamPreferences, "hdr", normalizedFilter);
+    const streamPreferences = applyDebridFeatureFilter(
+      store.get().streamPreferences,
+      "hdr",
+      normalizedFilter
+    );
     return store.set({ streamHdrFilter: normalizedFilter, streamPreferences }, options);
   },
 
   setStreamCodecFilter(filter, options = {}) {
     const normalizedFilter = normalizeEnum(filter, "streamCodecFilter");
-    const streamPreferences = applyDebridCodecFilter(store.get().streamPreferences, normalizedFilter);
+    const streamPreferences = applyDebridCodecFilter(
+      store.get().streamPreferences,
+      normalizedFilter
+    );
     return store.set({ streamCodecFilter: normalizedFilter, streamPreferences }, options);
   },
 

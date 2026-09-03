@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="hero_play">Afspil</string>
+    <string name="play_manually">Afspil manuelt</string>
+    <string name="player_post_play_play_manually">Afspil manuelt</string>
+    <string name="player_post_play_manual_subtitle">Afspil</string>
+</resources>

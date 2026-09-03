@@ -1,3 +1,4 @@
+/* global __NUVIO_APP_VERSION__ */
 import { Router } from "../../navigation/router.js";
 import { ScreenUtils } from "../../navigation/screen.js";
 import { addonRepository } from "../../../data/repository/addonRepository.js";
@@ -5,8 +6,12 @@ import { LocalStore } from "../../../core/storage/localStore.js";
 import { SessionStore } from "../../../core/storage/sessionStore.js";
 import { TmdbSettingsStore } from "../../../data/local/tmdbSettingsStore.js";
 import { HomeCatalogStore } from "../../../data/local/homeCatalogStore.js";
-import { ThemeStore } from "../../../data/local/themeStore.js";
+import { accentColorForTheme, ThemeStore } from "../../../data/local/themeStore.js";
+import { MemberAccessRepository } from "../../../data/remote/supabase/memberAccessRepository.js";
 import { ThemeManager } from "../../theme/themeManager.js";
+import { ThemeColors } from "../../theme/themeColors.js";
+import { availableThemeIds, resolveThemeName } from "../../theme/themeAccess.js";
+import { renderMemberBrandWordmark } from "../../components/memberBrandWordmark.js";
 import { PlayerSettingsStore } from "../../../data/local/playerSettingsStore.js";
 import {
   SUBTITLE_VERTICAL_OFFSET_DEFAULT,
@@ -14,9 +19,16 @@ import {
   SUBTITLE_VERTICAL_OFFSET_MIN,
   normalizeSubtitleVerticalOffset
 } from "../../../core/player/subtitleVerticalOffset.js";
+import {
+  SUBTITLE_TEXT_OPACITY_MAX,
+  SUBTITLE_TEXT_OPACITY_MIN,
+  SUBTITLE_TEXT_OPACITY_STEP,
+  normalizeSubtitleTextOpacity
+} from "../../../core/player/subtitleTextOpacity.js";
 import { TorrentSettingsStore } from "../../../data/local/torrentSettingsStore.js";
 import { WebOsAudioCompatibilityStore } from "../../../data/local/webOsAudioCompatibilityStore.js";
 import { LayoutPreferences } from "../../../data/local/layoutPreferences.js";
+import { ExperienceModeStore } from "../../../data/local/experienceModeStore.js";
 import { MdbListSettingsStore } from "../../../data/local/mdbListSettingsStore.js";
 import { AnimeSkipSettingsStore } from "../../../data/local/animeSkipSettingsStore.js";
 import {
@@ -35,26 +47,18 @@ import {
 } from "../../../data/local/debridSettingsStore.js";
 import { StreamBadgeSettingsStore } from "../../../data/local/streamBadgeSettingsStore.js";
 import { DebridApi } from "../../../data/remote/api/debridApi.js";
-import { DebridProviders } from "../../../core/debrid/debridProviders.js";
+import { DEBRID_AUTH_METHODS, DebridProviders } from "../../../core/debrid/debridProviders.js";
+import {
+  DEBRID_DEVICE_AUTH_STATUS,
+  DebridDeviceAuthService
+} from "../../../core/debrid/debridDeviceAuthService.js";
 import { ProfileManager } from "../../../core/profile/profileManager.js";
-import { ProfileSyncService } from "../../../core/profile/profileSyncService.js";
-import { LibrarySyncService } from "../../../core/profile/librarySyncService.js";
-import { SavedLibrarySyncService } from "../../../core/profile/savedLibrarySyncService.js";
-import { WatchedItemsSyncService } from "../../../core/profile/watchedItemsSyncService.js";
-import { WatchProgressSyncService } from "../../../core/profile/watchProgressSyncService.js";
 import { AuthManager } from "../../../core/auth/authManager.js";
 import { SupabaseApi } from "../../../data/remote/supabase/supabaseApi.js";
 import { Platform } from "../../../platform/index.js";
-import {
-  FAST_HORIZONTAL_NAVIGATION_KEY,
-  ROTATED_DPAD_KEY,
-  isFastHorizontalNavigationEnabled,
-  shouldUseRotatedMapping
-} from "../../../platform/sharedKeys.js";
-import {
-  CW_DISPLAY_SNAPSHOT_KEY,
-  CW_ENRICHMENT_CACHE_KEY
-} from "../home/homeConstants.js";
+import { TizenCapabilities } from "../../../platform/tizen/tizenCapabilities.js";
+import { isFastHorizontalNavigationEnabled } from "../../../platform/sharedKeys.js";
+import { CW_DISPLAY_SNAPSHOT_KEY, CW_ENRICHMENT_CACHE_KEY } from "../home/homeConstants.js";
 import { I18n } from "../../../i18n/index.js";
 import { PluginManager } from "../../../core/player/pluginManager.js";
 import { QrCodeGenerator } from "../../../core/qr/qrCodeGenerator.js";
@@ -85,17 +89,18 @@ import {
   setLegacySidebarExpanded
 } from "../../components/sidebarNavigation.js";
 import { renderLoadingIndicator } from "../../components/loadingIndicator.js";
+import { getLatestAppUpdate } from "../../../core/update/appUpdateService.js";
+import { showAppUpdatePrompt } from "../../components/appUpdatePrompt.js";
 
-const STRICT_DPAD_GRID_KEY = "strictDpadGridNavigation";
 const SETTINGS_UI_STATE_KEY = "settingsScreenUiState";
 const SETTINGS_RAIL_SCROLL_TARGET_RATIO = 0.42;
 const SETTINGS_RAIL_SCROLL_STIFFNESS = 180;
 const SETTINGS_RAIL_SCROLL_DAMPING_RATIO = 0.95;
 const SETTINGS_MARQUEE_VELOCITY_PX_PER_SECOND = 90; // ATV 45dp/s -> 90px/s
-const SETTINGS_VERSION_LABEL = formatSettingsVersionLabel(
-  typeof __NUVIO_APP_VERSION__ !== "undefined" ? __NUVIO_APP_VERSION__ : "0.0.0"
-);
-const PRIVACY_URL = "https://tapframe.github.io/NuvioStreaming/#privacy-policy";
+const CURRENT_APP_VERSION =
+  typeof __NUVIO_APP_VERSION__ !== "undefined" ? __NUVIO_APP_VERSION__ : "0.0.0";
+const SETTINGS_VERSION_LABEL = formatSettingsVersionLabel(CURRENT_APP_VERSION);
+const PRIVACY_URL = "https://nuvio.tv/privacy-policy";
 
 function formatHalfStepSettingValue(value, suffix = "") {
   const rounded = Math.round(Number(value || 0) * 2) / 2;
@@ -124,6 +129,36 @@ const STILL_WATCHING_THRESHOLD_OPTIONS = [2, 3, 4, 5, 6].map((value) => ({
 }));
 
 const THEME_OPTIONS = [
+  {
+    id: "GOLD",
+    labelKey: "settings.appearance.themes.gold",
+    color: "#e8a91c",
+    onColor: "#111111"
+  },
+  {
+    id: "JADE",
+    labelKey: "settings.appearance.themes.jade",
+    color: "#22d37c",
+    onColor: "#111111"
+  },
+  {
+    id: "ROSE_GOLD",
+    labelKey: "settings.appearance.themes.roseGold",
+    color: "#ec70a9",
+    onColor: "#111111"
+  },
+  {
+    id: "ARCTIC_BLUE",
+    labelKey: "settings.appearance.themes.arcticBlue",
+    color: "#3185f5",
+    onColor: "#ffffff"
+  },
+  {
+    id: "GRAPHITE",
+    labelKey: "settings.appearance.themes.graphite",
+    color: "#aab2be",
+    onColor: "#111111"
+  },
   {
     id: "WHITE",
     labelKey: "settings.appearance.themes.white",
@@ -171,8 +206,10 @@ const FONT_OPTIONS = [
 
 const APP_LANGUAGE_NATIVE_LABELS = {
   ar: "Arabic",
+  bg: "Bulgarian",
   bs: "Bosnian",
   cs: "Cestina",
+  da: "Dansk",
   de: "Deutsch",
   en: "English",
   el: "Greek",
@@ -195,11 +232,14 @@ const APP_LANGUAGE_NATIVE_LABELS = {
   ru: "Russian",
   sk: "Slovencina",
   sl: "Slovenscina",
+  "sr-latn": "Srpski (latinica)",
   sv: "Svenska",
   ta: "Tamil",
   tr: "Turkce",
+  uk: "Ukrainian",
   vi: "Tieng Viet",
-  "zh-cn": "Chinese (Simplified)"
+  "zh-cn": "Chinese (Simplified)",
+  "zh-tw": "Chinese (Traditional)"
 };
 
 function appLanguageOptionLabel(localeId) {
@@ -305,7 +345,10 @@ const AVAILABLE_LANGUAGES = [
   { id: "zu", label: "Zulu" }
 ].sort((left, right) => left.label.localeCompare(right.label));
 
-const PREFERRED_SUBTITLE_LANGUAGE_OPTIONS = [{ id: "off", label: "Off" }, ...AVAILABLE_LANGUAGES];
+const PREFERRED_SUBTITLE_LANGUAGE_OPTIONS = [
+  { id: "off", labelKey: "common.none", label: "None" },
+  ...AVAILABLE_LANGUAGES
+];
 
 // Preferred audio language previously only offered System / English / Italian.
 // The selected value is matched generically against each stream's audio tracks,
@@ -318,17 +361,52 @@ const PREFERRED_PLAYBACK_LANGUAGE_OPTIONS = [
   { id: "none", labelKey: "common.none" },
   ...AVAILABLE_LANGUAGES
 ];
+const SECONDARY_PLAYBACK_LANGUAGE_OPTIONS = [
+  { id: "none", labelKey: "common.none" },
+  { id: "original", labelKey: "audio_lang_original", label: "Original language" },
+  ...AVAILABLE_LANGUAGES
+];
 
 const STREAM_AUTOPLAY_MODE_OPTIONS = [
-  { id: "MANUAL", labelKey: "autoplay_mode_manual", captionKey: "autoplay_mode_manual_desc", label: "Manual (choose stream)" },
-  { id: "FIRST_STREAM", labelKey: "autoplay_mode_first", captionKey: "autoplay_mode_first_desc", label: "Auto-play first source" },
-  { id: "REGEX_MATCH", labelKey: "autoplay_mode_regex", captionKey: "autoplay_mode_regex_desc", label: "Auto-play regex match" }
+  {
+    id: "MANUAL",
+    labelKey: "autoplay_mode_manual",
+    captionKey: "autoplay_mode_manual_desc",
+    label: "Manual (choose stream)"
+  },
+  {
+    id: "FIRST_STREAM",
+    labelKey: "autoplay_mode_first",
+    captionKey: "autoplay_mode_first_desc",
+    label: "Auto-play first source"
+  },
+  {
+    id: "REGEX_MATCH",
+    labelKey: "autoplay_mode_regex",
+    captionKey: "autoplay_mode_regex_desc",
+    label: "Auto-play regex match"
+  }
 ];
 
 const STREAM_AUTOPLAY_SOURCE_OPTIONS = [
-  { id: "ALL_SOURCES", labelKey: "autoplay_scope_all", captionKey: "autoplay_scope_all_desc", label: "All sources" },
-  { id: "INSTALLED_ADDONS_ONLY", labelKey: "autoplay_scope_addons", captionKey: "autoplay_scope_addons_desc", label: "Installed addons only" },
-  { id: "ENABLED_PLUGINS_ONLY", labelKey: "autoplay_scope_plugins", captionKey: "autoplay_scope_plugins_desc", label: "Enabled plugins only" }
+  {
+    id: "ALL_SOURCES",
+    labelKey: "autoplay_scope_all",
+    captionKey: "autoplay_scope_all_desc",
+    label: "All sources"
+  },
+  {
+    id: "INSTALLED_ADDONS_ONLY",
+    labelKey: "autoplay_scope_addons",
+    captionKey: "autoplay_scope_addons_desc",
+    label: "Installed addons only"
+  },
+  {
+    id: "ENABLED_PLUGINS_ONLY",
+    labelKey: "autoplay_scope_plugins",
+    captionKey: "autoplay_scope_plugins_desc",
+    label: "Enabled plugins only"
+  }
 ];
 
 const STREAM_AUTOPLAY_TIMEOUT_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30]
@@ -391,9 +469,7 @@ const SUBTITLE_OFFSET_OPTIONS = Array.from(
     const value = SUBTITLE_VERTICAL_OFFSET_MIN + index;
     return {
       id: value,
-      label: value === SUBTITLE_VERTICAL_OFFSET_DEFAULT
-        ? `Default (${value}%)`
-        : `${value}%`
+      label: value === SUBTITLE_VERTICAL_OFFSET_DEFAULT ? `Default (${value}%)` : `${value}%`
     };
   }
 );
@@ -407,6 +483,16 @@ const SUBTITLE_TEXT_COLOR_OPTIONS = [
   { id: "#00FF88", label: "Green" }
 ];
 
+const SUBTITLE_TEXT_OPACITY_OPTIONS = Array.from(
+  {
+    length: (SUBTITLE_TEXT_OPACITY_MAX - SUBTITLE_TEXT_OPACITY_MIN) / SUBTITLE_TEXT_OPACITY_STEP + 1
+  },
+  (_, index) => {
+    const value = SUBTITLE_TEXT_OPACITY_MIN + index * SUBTITLE_TEXT_OPACITY_STEP;
+    return { id: value, label: `${value}%` };
+  }
+);
+
 const SUBTITLE_OUTLINE_COLOR_OPTIONS = [
   { id: "#000000", label: "Black" },
   { id: "#FFFFFF", label: "White" },
@@ -415,7 +501,9 @@ const SUBTITLE_OUTLINE_COLOR_OPTIONS = [
 ];
 
 function normalizeSubtitleStyleHex(value, fallback) {
-  const hex = String(value || "").trim().toUpperCase();
+  const hex = String(value || "")
+    .trim()
+    .toUpperCase();
   return /^#[0-9A-F]{6}$/.test(hex) ? hex : fallback;
 }
 
@@ -425,6 +513,10 @@ function clampSubtitleSize(value) {
     return 120;
   }
   return Math.min(200, Math.max(50, parsed));
+}
+
+function clampSubtitleTextOpacity(value) {
+  return normalizeSubtitleTextOpacity(value);
 }
 
 function clampSubtitleOffset(value) {
@@ -621,7 +713,7 @@ const SECTION_META = [
   {
     id: "streams",
     labelKey: "settings_stream_badges_section",
-    subtitle: "Import and manage Fusion badge URLs"
+    subtitleKey: "settings_stream_badges_description"
   },
   {
     id: "playback",
@@ -630,8 +722,8 @@ const SECTION_META = [
   },
   {
     id: "trakt",
-    labelKey: "settings.sections.trakt.label",
-    subtitleKey: "settings.sections.trakt.subtitle"
+    labelKey: "settings_tracking_title",
+    subtitleKey: "settings_tracking_subtitle"
   },
   {
     id: "advanced",
@@ -781,10 +873,7 @@ function syncLayoutPreviewMetrics(root) {
     const borderX =
       (parseFloat(cardStyle.borderLeftWidth) || 0) + (parseFloat(cardStyle.borderRightWidth) || 0);
     const previewRect = preview.getBoundingClientRect?.();
-    const width = Math.max(
-      0,
-      previewRect?.width || cardRect.width - paddingX - borderX
-    );
+    const width = Math.max(0, previewRect?.width || cardRect.width - paddingX - borderX);
     const height = Math.max(0, parseFloat(previewStyle.height) || previewRect?.height || 224);
     if (!width || !height) return;
 
@@ -794,7 +883,11 @@ function syncLayoutPreviewMetrics(root) {
       const gap = width * 0.03;
       setLayoutPreviewMetric(preview, "--settings-layout-modern-card-width", cardWidth);
       setLayoutPreviewMetric(preview, "--settings-layout-modern-gap", gap);
-      setLayoutPreviewMetric(preview, "--settings-layout-modern-cycle-width", (cardWidth + gap) * 3);
+      setLayoutPreviewMetric(
+        preview,
+        "--settings-layout-modern-cycle-width",
+        (cardWidth + gap) * 3
+      );
       return;
     }
 
@@ -805,8 +898,16 @@ function syncLayoutPreviewMetrics(root) {
       setLayoutPreviewMetric(preview, "--settings-layout-grid-gap", gap);
       setLayoutPreviewMetric(preview, "--settings-layout-grid-card-width", cardWidth);
       setLayoutPreviewMetric(preview, "--settings-layout-grid-card-height", cardHeight);
-      setLayoutPreviewMetric(preview, "--settings-layout-grid-canvas-height", cardHeight * 7 + gap * 6);
-      setLayoutPreviewMetric(preview, "--settings-layout-grid-cycle-height", (cardHeight + gap) * 3);
+      setLayoutPreviewMetric(
+        preview,
+        "--settings-layout-grid-canvas-height",
+        cardHeight * 7 + gap * 6
+      );
+      setLayoutPreviewMetric(
+        preview,
+        "--settings-layout-grid-cycle-height",
+        (cardHeight + gap) * 3
+      );
       return;
     }
 
@@ -819,7 +920,11 @@ function syncLayoutPreviewMetrics(root) {
       setLayoutPreviewMetric(preview, "--settings-layout-classic-row-height", rowHeight);
       setLayoutPreviewMetric(preview, "--settings-layout-classic-card-width", cardWidth);
       setLayoutPreviewMetric(preview, "--settings-layout-classic-gap", gap);
-      setLayoutPreviewMetric(preview, "--settings-layout-classic-cycle-width", (cardWidth + gap) * 2);
+      setLayoutPreviewMetric(
+        preview,
+        "--settings-layout-classic-cycle-width",
+        (cardWidth + gap) * 2
+      );
     }
   });
 }
@@ -873,7 +978,7 @@ function translateSectionCopy(section) {
 
 function renderSectionNavIcon(sectionId) {
   if (sectionId === "trakt") {
-    return '<img class="settings-nav-icon settings-nav-icon-image" src="assets/icons/trakt_tv_glyph.svg" alt="" aria-hidden="true" />';
+    return '<span class="settings-nav-icon settings-nav-icon-material material-icons" aria-hidden="true">sync</span>';
   }
   if (sectionId === "playback") {
     return iconSvg(
@@ -883,14 +988,6 @@ function renderSectionNavIcon(sectionId) {
   }
   const iconName = SECTION_ICONS[sectionId] || "settings";
   return `<span class="settings-nav-icon settings-nav-icon-material material-icons" aria-hidden="true">${iconName}</span>`;
-}
-
-function cycleOption(options, currentValue) {
-  const index = options.findIndex((option) => String(option.id) === String(currentValue));
-  if (index < 0 || index === options.length - 1) {
-    return options[0];
-  }
-  return options[index + 1];
 }
 
 function maskValue(value, fallback) {
@@ -904,13 +1001,6 @@ function maskValue(value, fallback) {
   return `••••••${trimmed.slice(-4)}`;
 }
 
-function labelForTheme(themeName) {
-  return translateOptionLabel(
-    THEME_OPTIONS.find((item) => item.id === String(themeName || "").toUpperCase()),
-    t("settings.appearance.themes.white")
-  );
-}
-
 function labelForFont(fontFamily) {
   return (
     FONT_OPTIONS.find((item) => item.id === String(fontFamily || "").toUpperCase())?.label ||
@@ -922,13 +1012,6 @@ function labelForLanguage(language) {
   return translateOptionLabel(
     LANGUAGE_OPTIONS.find((item) => String(item.id) === String(language)),
     t("common.systemDefault")
-  );
-}
-
-function labelForLayout(layout) {
-  return translateOptionLabel(
-    HOME_LAYOUT_OPTIONS.find((item) => item.id === String(layout || "").toLowerCase()),
-    t("settings.layout.homeLayouts.classic.label")
   );
 }
 
@@ -1738,11 +1821,17 @@ async function fetchAccountSyncOverview() {
 
 function getVisibleSections(model) {
   const isPrimaryProfileActive = String(model?.activeProfileId || "1") === "1";
+  const isEssential = model?.experience?.mode === "ESSENTIAL";
   return SECTION_META.filter((section) => {
     if (section.hideFromNav) {
       return false;
     }
-    if (section.id === "account" || section.id === "trakt") {
+    // Android keeps Fusion/stream presentation controls inside the advanced
+    // part of Layout, which is not exposed in Essential mode.
+    if (isEssential && section.id === "streams") {
+      return false;
+    }
+    if (section.id === "account" || section.id === "profiles") {
       return isPrimaryProfileActive;
     }
     return true;
@@ -1753,8 +1842,29 @@ function getSettingsSectionById(sectionId) {
   return SECTION_META.find((section) => section.id === sectionId) || null;
 }
 
-function canOpenSettingsSection(sectionId) {
-  return Boolean(getSettingsSectionById(sectionId));
+function isFirstStrongRtlText(value = "") {
+  for (const character of String(value || "")) {
+    const codePoint = character.codePointAt(0) || 0;
+    const isRtl =
+      (codePoint >= 0x0590 && codePoint <= 0x08ff) ||
+      (codePoint >= 0xfb1d && codePoint <= 0xfdff) ||
+      (codePoint >= 0xfe70 && codePoint <= 0xfeff);
+    if (isRtl) {
+      return true;
+    }
+    const isLtr =
+      (codePoint >= 0x0041 && codePoint <= 0x005a) ||
+      (codePoint >= 0x0061 && codePoint <= 0x007a) ||
+      (codePoint >= 0x00c0 && codePoint <= 0x02af) ||
+      (codePoint >= 0x0370 && codePoint <= 0x058f) ||
+      (codePoint >= 0x0900 && codePoint <= 0x1fff) ||
+      (codePoint >= 0x2e80 && codePoint <= 0xd7ff) ||
+      (codePoint >= 0xf900 && codePoint <= 0xfaff);
+    if (isLtr) {
+      return false;
+    }
+  }
+  return false;
 }
 
 function updateSettingsMarqueeTargets(root) {
@@ -1767,6 +1877,8 @@ function updateSettingsMarqueeTargets(root) {
     const originalText = label.dataset.marqueeText || String(label.textContent || "");
     label.dataset.marqueeText = originalText;
     label.textContent = originalText;
+    const textIsRtl = isFirstStrongRtlText(originalText);
+    label.setAttribute("dir", textIsRtl ? "rtl" : "ltr");
 
     const item = label.closest(".settings-nav-item");
     if (!item?.classList.contains("focused")) {
@@ -1789,7 +1901,7 @@ function updateSettingsMarqueeTargets(root) {
       label._settingsMarqueeAnimation = label.animate(
         [
           { transform: "translateX(0)" },
-          { transform: `translateX(-${distance}px)` }
+          { transform: `translateX(${textIsRtl ? distance : -distance}px)` }
         ],
         {
           duration: travelMs,
@@ -1982,7 +2094,8 @@ function createDefaultExpandedState(sectionId) {
       homeContent: false,
       continueWatching: false,
       detailPage: false,
-      focusedPoster: false
+      focusedPoster: false,
+      cardAppearance: false
     };
   }
 
@@ -2109,6 +2222,8 @@ export const SettingsScreen = {
     this.advancedCacheCleared = false;
     this.optionDialog = this.optionDialog || null;
     this.textDialog = this.textDialog || null;
+    this.debridAuthDialog = null;
+    this.debridAuthPollTimer = null;
     this.dialogFocusIndex = Number.isFinite(this.dialogFocusIndex) ? this.dialogFocusIndex : 0;
     this.sidebarExpanded = false;
     this.pillIconOnly = false;
@@ -2119,6 +2234,18 @@ export const SettingsScreen = {
     this.sidebarProfile = sidebarProfile;
     this.model = initialModel;
     await this.render({ refreshModel: false });
+    this.isMounted = true;
+    this.memberAccessUnsubscribe = MemberAccessRepository.subscribe((access) => {
+      if (!this.isMounted || !this.model) return;
+      const previous = this.model.memberAccess || {};
+      if (
+        String(previous.tier || "") === String(access?.tier || "") &&
+        JSON.stringify(previous.entitlements || []) === JSON.stringify(access?.entitlements || [])
+      ) {
+        return;
+      }
+      void this.render({ refreshModel: true });
+    });
   },
 
   ensureExpandedState(sectionId) {
@@ -2152,7 +2279,7 @@ export const SettingsScreen = {
   },
 
   getAppearanceThemeFocusKey() {
-    return this.appearanceThemeFocusKey || `appearance:theme:${THEME_OPTIONS[0]?.id || "WHITE"}`;
+    return this.appearanceThemeFocusKey || "appearance:theme:WHITE";
   },
 
   collapseExpandedSection(sectionId) {
@@ -2188,12 +2315,17 @@ export const SettingsScreen = {
   async collectModel() {
     const authState = AuthManager.getAuthState();
     this.ensureAccountSyncOverview(authState);
-    const [addons, profiles] = await Promise.all([
+    const [addons, profiles, memberAccess] = await Promise.all([
       addonRepository.getInstalledAddons(),
-      ProfileManager.getProfiles()
+      ProfileManager.getProfiles(),
+      MemberAccessRepository.getAccess().catch(() => MemberAccessRepository.getCurrentAccess())
     ]);
     const activeProfileId = ProfileManager.getActiveProfileId();
     const pluginSources = PluginManager.listPluginSources();
+    const pluginSummary = PluginManager.getSummary();
+    const storedTheme = ThemeStore.get();
+    const resolvedThemeName = resolveThemeName(storedTheme.themeName, memberAccess);
+    ThemeManager.apply({ enforceAccess: true, access: memberAccess });
 
     return {
       addons,
@@ -2201,25 +2333,31 @@ export const SettingsScreen = {
       activeProfileId,
       accountEmail: getSessionEmail(),
       pluginSources,
+      pluginSummary,
       pluginsEnabled: PluginManager.pluginsEnabled,
-      theme: ThemeStore.get(),
+      theme: {
+        ...storedTheme,
+        themeName: resolvedThemeName,
+        accentColor: accentColorForTheme(resolvedThemeName)
+      },
+      memberAccess,
       player: PlayerSettingsStore.get(),
       webOsAudioCompatibility: Platform.isWebOS()
         ? WebOsAudioCompatibilityStore.get({
-          legacyForceAll: Boolean(PlayerSettingsStore.get().forceDtsTrueHdAudio)
-        })
+            legacyForceAll: Boolean(PlayerSettingsStore.get().forceDtsTrueHdAudio)
+          })
         : null,
       torrent: TorrentSettingsStore.get(),
       layout: LayoutPreferences.get(),
+      homeCatalog: HomeCatalogStore.get(),
       tmdb: TmdbSettingsStore.get(),
       mdbList: MdbListSettingsStore.get(),
       animeSkip: AnimeSkipSettingsStore.get(),
       streamBadgeSettings: StreamBadgeSettingsStore.get(),
       debrid: DebridSettingsStore.get(),
       trakt: this.collectTraktModel(),
+      experience: ExperienceModeStore.get(),
       fastHorizontalNavigation: isFastHorizontalNavigationEnabled(),
-      rotatedDpad: shouldUseRotatedMapping(),
-      strictDpadGrid: Boolean(LocalStore.get(STRICT_DPAD_GRID_KEY, true)),
       authState,
       accountSyncOverview: this.accountSyncOverview || null,
       accountSyncOverviewLoading: Boolean(this.accountSyncOverviewPromise)
@@ -2287,7 +2425,6 @@ export const SettingsScreen = {
           ${renderSectionNavIcon(item.id)}
           <span class="settings-nav-label-wrap">
             <span class="settings-nav-label">${escapeHtml(translateSectionCopy(item).label)}</span>
-            ${item.id === "plugins" ? `<span class="settings-nav-badge">${escapeHtml(t("common.soon", {}, "Soon"))}</span>` : ""}
           </span>
         </span>
         ${iconSvg(ROW_ICONS.chevron, "settings-nav-chevron")}
@@ -2314,6 +2451,7 @@ export const SettingsScreen = {
     value = "",
     icon = "chevron",
     leadingIcon = "",
+    leadingIconSrc = "",
     external = false,
     classes = "",
     disabled = false,
@@ -2333,9 +2471,10 @@ export const SettingsScreen = {
     return `
       <button class="settings-action-row settings-content-focusable focusable${classes ? ` ${classes}` : ""}${inert ? " is-disabled" : ""}${planned ? " is-planned" : ""}"
               data-zone="content"
+              aria-disabled="${inert ? "true" : "false"}"
               ${this.registerAction(focusKey, inert ? () => {} : this.actionMap.get(focusKey))}
               data-role="action">
-        ${leadingIcon ? `<span class="settings-row-leading-icon material-icons" aria-hidden="true">${escapeHtml(leadingIcon)}</span>` : ""}
+        ${leadingIconSrc ? `<img class="settings-row-leading-image" src="${escapeHtml(leadingIconSrc)}" alt="" aria-hidden="true">` : leadingIcon ? `<span class="settings-row-leading-icon material-icons" aria-hidden="true">${escapeHtml(leadingIcon)}</span>` : ""}
         <span class="settings-row-copy">
           <span class="settings-row-title">${escapeHtml(title)}</span>
           ${subtitle ? `<span class="settings-row-subtitle">${escapeHtml(subtitle)}</span>` : ""}
@@ -2357,6 +2496,7 @@ export const SettingsScreen = {
     return `
       <button class="settings-action-row settings-toggle-row settings-content-focusable focusable${inert ? " is-disabled" : ""}${planned ? " is-planned" : ""}"
               data-zone="content"
+              aria-disabled="${inert ? "true" : "false"}"
               ${this.registerAction(focusKey, inert ? () => {} : this.actionMap.get(focusKey))}
               data-role="toggle">
         <span class="settings-row-copy">
@@ -2376,12 +2516,13 @@ export const SettingsScreen = {
   renderThemeCard(theme, selected, focusKey) {
     const selectedClass = selected ? " is-selected" : "";
     const swatchClass = theme.id === "WHITE" ? " settings-theme-swatch-light" : "";
+    const swatchBackground = ThemeColors.getPalette(theme.id)["--accent-gradient"] || theme.color;
     return `
       <button class="settings-theme-card settings-content-focusable focusable${selectedClass}"
               data-zone="content"
               ${this.registerAction(focusKey, this.actionMap.get(focusKey))}>
         <span class="settings-theme-swatch-wrap">
-          <span class="settings-theme-swatch${swatchClass}" style="background:${escapeHtml(theme.color)};">
+          <span class="settings-theme-swatch${swatchClass}" style="background:${escapeHtml(swatchBackground)};">
             ${selected ? `<span class="settings-theme-check-wrap" style="color:${escapeHtml(theme.onColor || "#fff")};">${iconSvg(ROW_ICONS.check, "settings-theme-check")}</span>` : ""}
           </span>
         </span>
@@ -2395,7 +2536,6 @@ export const SettingsScreen = {
       <button class="settings-layout-card settings-content-focusable focusable${selected ? " is-selected" : ""}"
               data-zone="content"
               ${this.registerAction(focusKey, this.actionMap.get(focusKey))}>
-        <span class="settings-layout-badge">${escapeHtml(t("common.beta", {}, "Beta"))}</span>
         ${renderLayoutPreviewPlaceholderMarkup()}
         <span class="settings-layout-preview settings-layout-preview-${escapeHtml(option.id)}">${renderLayoutPreviewMarkup(option.id)}</span>
         <span class="settings-layout-name">${escapeHtml(translateOptionLabel(option))}</span>
@@ -2463,24 +2603,30 @@ export const SettingsScreen = {
   openOptionDialog({
     title,
     message = "",
+    messageHtml = "",
     options,
     selectedId,
     onSelect,
     returnFocusKey,
     dialogClassName = "",
     optionRenderer = "default",
-    optionColumns = null
+    optionColumns = null,
+    onRender = null,
+    onClose = null
   }) {
     this.textDialog = null;
     this.optionDialog = {
       title,
       message,
+      messageHtml,
       options: Array.isArray(options) ? options : [],
       selectedId: selectedId ?? null,
       onSelect,
       returnFocusKey,
       dialogClassName,
       optionRenderer,
+      onRender,
+      onClose,
       // Compact action dialogs can opt into multiple columns so dpad left/right
       // can move between visually adjacent options.
       optionColumns: Number.isFinite(Number(optionColumns))
@@ -2562,7 +2708,9 @@ export const SettingsScreen = {
       return;
     }
     this.contentFocusKey = this.optionDialog.returnFocusKey || this.contentFocusKey;
+    const onClose = this.optionDialog.onClose;
     this.optionDialog = null;
+    if (typeof onClose === "function") onClose();
     this.focusZone = "content";
   },
 
@@ -2590,7 +2738,7 @@ export const SettingsScreen = {
       String(this.optionDialog.dialogClassName || "") === "settings-p2p-consent-dialog";
     const messageHtml = this.optionDialog.message
       ? `<div class="settings-text-dialog-message settings-option-dialog-message${isP2pConsentDialog ? " settings-p2p-consent-message" : ""}">${escapeHtml(String(this.optionDialog.message)).replace(/\n/g, "<br>")}</div>`
-      : "";
+      : String(this.optionDialog.messageHtml || "");
 
     return `
       <div class="settings-dialog-backdrop">
@@ -2633,7 +2781,7 @@ export const SettingsScreen = {
                         : `<span class="settings-dialog-option-label">${escapeHtml(translateOptionLabel(option))}</span>`
                 }
               </button>
-            `
+            `;
               })
               .join("")}
           </div>
@@ -2752,6 +2900,224 @@ export const SettingsScreen = {
     return this.textDialog && typeof this.textDialog.onClear === "function" ? 3 : 2;
   },
 
+  stopDebridDeviceAuth({ clearState = true } = {}) {
+    if (this.debridAuthPollTimer) {
+      clearTimeout(this.debridAuthPollTimer);
+      this.debridAuthPollTimer = null;
+    }
+    this.debridAuthNonce = Number(this.debridAuthNonce || 0) + 1;
+    if (clearState) this.debridAuthDialog = null;
+  },
+
+  isCurrentDebridAuth(nonce) {
+    return Boolean(this.debridAuthDialog && Number(this.debridAuthDialog.nonce) === Number(nonce));
+  },
+
+  debridAuthDialogMessageHtml() {
+    const state = this.debridAuthDialog;
+    if (!state) return "";
+    const providerName = escapeHtml(state.provider.displayName);
+    if (state.status === "connected") {
+      return `<div class="settings-debrid-auth-copy">${escapeHtml(
+        t(
+          "debrid_device_auth_connected",
+          { provider: state.provider.displayName },
+          `${state.provider.displayName} is connected.`
+        )
+      )}</div>`;
+    }
+    if (state.status === "starting") {
+      return `<div class="settings-debrid-auth-loading">${renderLoadingIndicator({ size: "small" })}<span>${escapeHtml(
+        t("debrid_device_auth_starting", {}, `Starting ${state.provider.displayName} sign-in…`)
+      )}</span></div>`;
+    }
+    if (state.status === "waiting" && state.session) {
+      const verificationUrl =
+        state.session.friendlyVerificationUrl || state.session.verificationUrl;
+      return `
+        <div class="settings-debrid-auth-body">
+          <p class="settings-debrid-auth-copy">${escapeHtml(
+            t(
+              "debrid_device_auth_instructions",
+              {},
+              "Scan the QR code or open the address on another device, then enter the code."
+            )
+          )}</p>
+          <canvas class="settings-debrid-auth-qr" data-debrid-auth-qr aria-label="${escapeHtml(
+            t("cd_qr_code", {}, `${providerName} QR code`)
+          )}"></canvas>
+          <div class="settings-debrid-auth-code">${escapeHtml(state.session.userCode)}</div>
+          <div class="settings-debrid-auth-url">${escapeHtml(verificationUrl)}</div>
+          <div class="settings-debrid-auth-status">${renderLoadingIndicator({ size: "small" })}<span>${escapeHtml(
+            t("debrid_device_auth_waiting", {}, "Waiting for authorization…")
+          )}</span></div>
+        </div>`;
+    }
+    const fallback =
+      state.status === "expired"
+        ? t("debrid_device_auth_expired", {}, "The authorization code expired. Try again.")
+        : state.status === "missingConfiguration"
+          ? t(
+              "debrid_device_auth_missing_configuration",
+              {},
+              "Premiumize sign-in is not configured in this build."
+            )
+          : t("debrid_device_auth_failed", {}, `Could not connect ${state.provider.displayName}.`);
+    return `<div class="settings-debrid-auth-error"><strong>${providerName}</strong><span>${escapeHtml(
+      state.message || fallback
+    )}</span></div>`;
+  },
+
+  refreshDebridDeviceAuthDialog() {
+    const state = this.debridAuthDialog;
+    if (!state) return;
+    const isConnected = state.status === "connected";
+    const canRetry = ["failed", "expired", "missingConfiguration"].includes(state.status);
+    const options = isConnected
+      ? [
+          { id: "disconnect", label: t("debrid_disconnect", {}, "Disconnect") },
+          { id: "cancel", label: t("common.cancel", {}, "Cancel") }
+        ]
+      : [
+          ...(canRetry ? [{ id: "retry", label: t("common.retry", {}, "Retry") }] : []),
+          { id: "cancel", label: t("common.cancel", {}, "Cancel") }
+        ];
+    this.openOptionDialog({
+      title: isConnected
+        ? t(
+            "debrid_disconnect_provider",
+            { provider: state.provider.displayName },
+            `Disconnect ${state.provider.displayName}`
+          )
+        : t(
+            "debrid_connect_provider",
+            { provider: state.provider.displayName },
+            `Connect ${state.provider.displayName}`
+          ),
+      messageHtml: this.debridAuthDialogMessageHtml(),
+      options,
+      optionColumns: options.length,
+      returnFocusKey: `integration:debrid:key:${state.provider.id}`,
+      dialogClassName: "settings-debrid-auth-dialog",
+      onRender: (dialogSlot) => {
+        const canvas = dialogSlot.querySelector?.("[data-debrid-auth-qr]");
+        const content =
+          this.debridAuthDialog?.session?.friendlyVerificationUrl ||
+          this.debridAuthDialog?.session?.verificationUrl ||
+          "";
+        if (canvas && content) {
+          try {
+            QrCodeGenerator.generate(canvas, content, 420);
+          } catch (error) {
+            console.warn("Failed to generate Debrid authorization QR", error);
+          }
+        }
+      },
+      onClose: () => this.stopDebridDeviceAuth(),
+      onSelect: async (option) => {
+        if (option.id === "retry") {
+          this.restartDebridDeviceAuth();
+          return false;
+        }
+        if (option.id === "disconnect") {
+          DebridSettingsStore.setProviderApiKey(state.provider.id, "");
+        }
+        return true;
+      }
+    });
+  },
+
+  openDebridDeviceAuthDialog(provider) {
+    this.stopDebridDeviceAuth();
+    const connected = Boolean(DebridProviders.apiKeyFor(DebridSettingsStore.get(), provider.id));
+    const nonce = Number(this.debridAuthNonce || 0) + 1;
+    this.debridAuthNonce = nonce;
+    this.debridAuthDialog = {
+      nonce,
+      provider,
+      status: connected ? "connected" : "starting",
+      session: null,
+      message: ""
+    };
+    this.refreshDebridDeviceAuthDialog();
+    if (!connected) setTimeout(() => void this.startDebridDeviceAuth(nonce), 0);
+  },
+
+  restartDebridDeviceAuth() {
+    const provider = this.debridAuthDialog?.provider;
+    if (!provider) return;
+    this.stopDebridDeviceAuth({ clearState: false });
+    const nonce = Number(this.debridAuthNonce || 0) + 1;
+    this.debridAuthNonce = nonce;
+    this.debridAuthDialog = { nonce, provider, status: "starting", session: null, message: "" };
+    this.refreshDebridDeviceAuthDialog();
+    setTimeout(() => void this.startDebridDeviceAuth(nonce), 0);
+  },
+
+  async startDebridDeviceAuth(nonce) {
+    try {
+      const state = this.debridAuthDialog;
+      if (!state || !this.isCurrentDebridAuth(nonce)) return;
+      const session = await DebridDeviceAuthService.start(state.provider.id);
+      if (!this.isCurrentDebridAuth(nonce)) return;
+      this.debridAuthDialog.session = session;
+      this.debridAuthDialog.status = "waiting";
+      this.debridAuthDialog.message = "";
+      this.refreshDebridDeviceAuthDialog();
+      await this.render({ refreshModel: false });
+      this.scheduleDebridDeviceAuthPoll(nonce);
+    } catch (error) {
+      if (!this.isCurrentDebridAuth(nonce)) return;
+      const message = String(error?.message || error || "");
+      this.debridAuthDialog.status = message.includes("PREMIUMIZE_CLIENT_ID")
+        ? "missingConfiguration"
+        : "failed";
+      this.debridAuthDialog.message = message.includes("PREMIUMIZE_CLIENT_ID") ? "" : message;
+      this.refreshDebridDeviceAuthDialog();
+      await this.render({ refreshModel: false });
+    }
+  },
+
+  scheduleDebridDeviceAuthPoll(nonce) {
+    if (!this.isCurrentDebridAuth(nonce)) return;
+    const seconds = Math.max(
+      1,
+      Math.trunc(Number(this.debridAuthDialog?.session?.intervalSeconds || 5))
+    );
+    this.debridAuthPollTimer = setTimeout(
+      () => void this.pollDebridDeviceAuth(nonce),
+      seconds * 1000
+    );
+  },
+
+  async pollDebridDeviceAuth(nonce) {
+    const state = this.debridAuthDialog;
+    if (!state?.session || !this.isCurrentDebridAuth(nonce)) return;
+    const result = await DebridDeviceAuthService.redeem(
+      state.provider.id,
+      state.session.deviceCode
+    ).catch((error) => ({
+      status: DEBRID_DEVICE_AUTH_STATUS.FAILED,
+      message: String(error?.message || error || "")
+    }));
+    if (!this.isCurrentDebridAuth(nonce)) return;
+    if (result.status === DEBRID_DEVICE_AUTH_STATUS.AUTHORIZED) {
+      DebridSettingsStore.setProviderApiKey(state.provider.id, result.accessToken);
+      this.closeOptionDialog();
+      await this.render();
+      return;
+    }
+    if (result.status === DEBRID_DEVICE_AUTH_STATUS.PENDING) {
+      this.scheduleDebridDeviceAuthPoll(nonce);
+      return;
+    }
+    this.debridAuthDialog.status =
+      result.status === DEBRID_DEVICE_AUTH_STATUS.EXPIRED ? "expired" : "failed";
+    this.debridAuthDialog.message = String(result.message || "");
+    this.refreshDebridDeviceAuthDialog();
+    await this.render({ refreshModel: false });
+  },
+
   renderCollapsibleRow({ focusKey, title, subtitle, expanded, bodyHtml = "", classes = "" }) {
     return `
       <div class="settings-collapsible${classes ? ` ${classes}` : ""}${expanded ? " is-open" : ""}">
@@ -2799,12 +3165,16 @@ export const SettingsScreen = {
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "account"))}
       <div class="settings-group-card settings-group-card-fill settings-account-card">
         <div class="settings-account-list">
-          ${loading ? `
+          ${
+            loading
+              ? `
             <div class="settings-account-loading">
               ${renderLoadingIndicator()}
               <span>${escapeHtml(t("account_loading", {}, "Loading..."))}</span>
             </div>
-          ` : ""}
+          `
+              : ""
+          }
           ${
             !loading && !signedIn
               ? `
@@ -2961,9 +3331,6 @@ export const SettingsScreen = {
         })
       );
     }
-    this.actionMap.set("profiles:rememberLast", () => {
-      ProfileManager.setRememberLastProfileEnabled(!ProfileManager.isRememberLastProfileEnabled());
-    });
     return `
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "profiles"))}
       <div class="settings-group-card settings-profile-card">
@@ -2979,16 +3346,6 @@ export const SettingsScreen = {
                 })
               : ""
           }
-          ${this.renderToggleRow({
-            focusKey: "profiles:rememberLast",
-            title: t("settings.profiles.rememberLast.title", {}, "Remember Last Profile"),
-            subtitle: t(
-              "settings.profiles.rememberLast.subtitle",
-              {},
-              "Skip the profile picker at startup and use the last selected profile. Profiles with a PIN are always asked."
-            ),
-            checked: ProfileManager.isRememberLastProfileEnabled()
-          })}
         </div>
       </div>
     `;
@@ -2996,16 +3353,41 @@ export const SettingsScreen = {
 
   renderAdvancedSection(model) {
     this.actionMap.set("advanced:fastHorizontalNavigation", () => {
-      LocalStore.set(
-        FAST_HORIZONTAL_NAVIGATION_KEY,
-        !isFastHorizontalNavigationEnabled()
-      );
+      LayoutPreferences.set({
+        fastHorizontalNavigationEnabled: !isFastHorizontalNavigationEnabled()
+      });
     });
-    this.actionMap.set("advanced:strictDpadGrid", () => {
-      LocalStore.set(STRICT_DPAD_GRID_KEY, !Boolean(LocalStore.get(STRICT_DPAD_GRID_KEY, true)));
+    this.actionMap.set("advanced:rememberLastProfile", () => {
+      ProfileManager.setRememberLastProfileEnabled(!ProfileManager.isRememberLastProfileEnabled());
     });
-    this.actionMap.set("advanced:rotatedDpad", () => {
-      LocalStore.set(ROTATED_DPAD_KEY, !shouldUseRotatedMapping());
+    const isEssential = model.experience?.mode === "ESSENTIAL";
+    this.actionMap.set("advanced:switchExperience", () => {
+      const targetMode = isEssential ? "ADVANCED" : "ESSENTIAL";
+      this.openOptionDialog({
+        title: t(
+          targetMode === "ADVANCED"
+            ? "experience_mode_confirm_advanced_title"
+            : "experience_mode_confirm_essential_title",
+          {},
+          targetMode === "ADVANCED" ? "Switch to Advanced?" : "Switch to Essential?"
+        ),
+        message: t(
+          targetMode === "ADVANCED"
+            ? "experience_mode_confirm_advanced_subtitle"
+            : "experience_mode_confirm_essential_subtitle",
+          {},
+          "Your saved settings stay unchanged and you can switch back anytime."
+        ),
+        options: [
+          { id: "cancel", labelKey: "action_cancel" },
+          { id: "confirm", labelKey: "profile_confirm" }
+        ],
+        selectedId: "confirm",
+        returnFocusKey: "advanced:switchExperience",
+        onSelect: (option) => {
+          if (option.id === "confirm") ExperienceModeStore.set({ mode: targetMode });
+        }
+      });
     });
     this.actionMap.set("advanced:clearContinueWatchingCache", () => {
       LocalStore.remove(CW_ENRICHMENT_CACHE_KEY);
@@ -3013,8 +3395,41 @@ export const SettingsScreen = {
       this.advancedCacheCleared = true;
     });
 
+    if (isEssential) {
+      return `
+        ${this.renderSectionHeader({
+          ...SECTION_META.find((item) => item.id === "advanced"),
+          subtitleKey: "experience_mode_switch_to_advanced_header_subtitle"
+        })}
+        <div class="settings-group-card"><div class="settings-stack">
+          ${this.renderActionRow({
+            focusKey: "advanced:switchExperience",
+            title: t("experience_mode_switch_to_advanced", {}, "Switch to Advanced"),
+            subtitle: t(
+              "experience_mode_switch_to_advanced_subtitle",
+              {},
+              "Show full layout, plug-in, integration, catalog, collection, and tuning settings."
+            ),
+            value: t("experience_mode_essential", {}, "Essential")
+          })}
+        </div></div>`;
+    }
+
     return `
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "advanced"))}
+      <div class="settings-group-heading"><div class="settings-group-title">${escapeHtml(t("experience_mode_group_title", {}, "Experience mode"))}</div></div>
+      <div class="settings-group-card"><div class="settings-stack">
+        ${this.renderActionRow({
+          focusKey: "advanced:switchExperience",
+          title: t("experience_mode_switch_to_essential", {}, "Switch to Essential"),
+          subtitle: t(
+            "experience_mode_switch_to_essential_subtitle",
+            {},
+            "Hide advanced setup surfaces without changing your saved values."
+          ),
+          value: t("experience_mode_advanced", {}, "Advanced")
+        })}
+      </div></div>
       <div class="settings-group-heading">
         <div class="settings-group-title">${escapeHtml(t("advanced_section_performance", {}, "Performance & navigation"))}</div>
       </div>
@@ -3031,24 +3446,14 @@ export const SettingsScreen = {
             checked: Boolean(model.fastHorizontalNavigation)
           })}
           ${this.renderToggleRow({
-            focusKey: "advanced:strictDpadGrid",
-            title: t("advanced_strict_dpad_grid", {}, "Strict D-pad Grid Navigation"),
+            focusKey: "advanced:rememberLastProfile",
+            title: t("advanced_remember_last_profile", {}, "Remember Last Profile"),
             subtitle: t(
-              "advanced_strict_dpad_grid_subtitle",
+              "advanced_remember_last_profile_subtitle",
               {},
-              "Keep directional focus movement aligned to rows and columns when possible."
+              "Remember last selected profile at startup"
             ),
-            checked: Boolean(model.strictDpadGrid)
-          })}
-          ${this.renderToggleRow({
-            focusKey: "advanced:rotatedDpad",
-            title: t("advanced_rotated_dpad", {}, "Rotated D-pad Mapping"),
-            subtitle: t(
-              "advanced_rotated_dpad_subtitle",
-              {},
-              "Swap directional key mapping for simulators or remotes that report rotated arrows."
-            ),
-            checked: Boolean(model.rotatedDpad)
+            checked: ProfileManager.isRememberLastProfileEnabled()
           })}
         </div>
       </div>
@@ -3076,10 +3481,12 @@ export const SettingsScreen = {
   },
 
   renderAppearanceSection(model) {
-    THEME_OPTIONS.forEach((theme) => {
+    const availableIds = new Set(availableThemeIds(model?.memberAccess));
+    const themeOptions = THEME_OPTIONS.filter((theme) => availableIds.has(theme.id));
+    themeOptions.forEach((theme) => {
       this.actionMap.set(`appearance:theme:${theme.id}`, () => {
         ThemeStore.set({ themeName: theme.id, accentColor: theme.color });
-        ThemeManager.apply();
+        ThemeManager.apply({ enforceAccess: true, access: model?.memberAccess });
       });
     });
 
@@ -3092,7 +3499,7 @@ export const SettingsScreen = {
         dialogClassName: "settings-appearance-dialog",
         onSelect: (option) => {
           ThemeStore.set({ fontFamily: option.id });
-          ThemeManager.apply();
+          ThemeManager.apply({ enforceAccess: true, access: model?.memberAccess });
         }
       });
     });
@@ -3107,7 +3514,7 @@ export const SettingsScreen = {
         onSelect: async (option) => {
           ThemeStore.set({ language: option.id });
           await I18n.init();
-          ThemeManager.apply();
+          ThemeManager.apply({ enforceAccess: true, access: model?.memberAccess });
           I18n.apply();
         }
       });
@@ -3118,11 +3525,24 @@ export const SettingsScreen = {
         amoledMode: nextAmoled,
         amoledSurfacesMode: nextAmoled ? Boolean(ThemeStore.get().amoledSurfacesMode) : false
       });
-      ThemeManager.apply();
+      ThemeManager.apply({ enforceAccess: true, access: model?.memberAccess });
     });
     this.actionMap.set("appearance:amoledSurfaces", () => {
       ThemeStore.set({ amoledSurfacesMode: !ThemeStore.get().amoledSurfacesMode });
-      ThemeManager.apply();
+      ThemeManager.apply({ enforceAccess: true, access: model?.memberAccess });
+    });
+    this.actionMap.set("appearance:settingsUiStyle", () => {
+      const options = ["CLASSIC", "HORIZON", "ZEN"].map((id) => ({
+        id,
+        labelKey: `settings_style_${id.toLowerCase()}`
+      }));
+      this.openOptionDialog({
+        title: t("appearance_settings_style", {}, "Settings style"),
+        options,
+        selectedId: model.theme.settingsUiStyle || "CLASSIC",
+        returnFocusKey: "appearance:settingsUiStyle",
+        onSelect: (option) => ThemeStore.set({ settingsUiStyle: option.id })
+      });
     });
 
     return `
@@ -3134,13 +3554,15 @@ export const SettingsScreen = {
         </div>
         <div class="settings-horizontal-scroll-frame">
           <div class="settings-theme-row">
-            ${THEME_OPTIONS.map((theme) =>
-              this.renderThemeCard(
-                theme,
-                String(model.theme.themeName).toUpperCase() === theme.id,
-                `appearance:theme:${theme.id}`
+            ${themeOptions
+              .map((theme) =>
+                this.renderThemeCard(
+                  theme,
+                  String(model.theme.themeName).toUpperCase() === theme.id,
+                  `appearance:theme:${theme.id}`
+                )
               )
-            ).join("")}
+              .join("")}
           </div>
           ${settingsScrollIndicatorMarkup("horizontal")}
         </div>
@@ -3171,6 +3593,20 @@ export const SettingsScreen = {
           <div class="settings-group-subtitle">${escapeHtml(t("appearance_font_and_language_subtitle", {}, "Choose the typeface and locale used throughout the app"))}</div>
         </div>
         <div class="settings-stack">
+          ${this.renderActionRow({
+            focusKey: "appearance:settingsUiStyle",
+            title: t("appearance_settings_style", {}, "Settings style"),
+            subtitle: t(
+              "appearance_settings_style_subtitle",
+              {},
+              "Choose the layout used by Settings"
+            ),
+            value: t(
+              `settings_style_${String(model.theme.settingsUiStyle || "CLASSIC").toLowerCase()}`,
+              {},
+              String(model.theme.settingsUiStyle || "CLASSIC")
+            )
+          })}
           ${this.renderActionRow({
             focusKey: "appearance:font",
             title: t("appearance_font", {}, "App Font"),
@@ -3207,6 +3643,9 @@ export const SettingsScreen = {
     this.actionMap.set("layout:toggle:focusedPoster", () => {
       this.toggleExpandedSection("layout", "focusedPoster");
     });
+    this.actionMap.set("layout:toggle:cardAppearance", () => {
+      this.toggleExpandedSection("layout", "cardAppearance");
+    });
 
     HOME_LAYOUT_OPTIONS.forEach((option) => {
       this.actionMap.set(`layout:layout:${option.id}`, () => {
@@ -3226,10 +3665,123 @@ export const SettingsScreen = {
     this.actionMap.set("layout:heroSection", () => {
       LayoutPreferences.set({ heroSectionEnabled: !LayoutPreferences.get().heroSectionEnabled });
     });
-    this.actionMap.set("layout:searchDiscover", () => {
-      LayoutPreferences.set({
-        searchDiscoverEnabled: !LayoutPreferences.get().searchDiscoverEnabled
+    this.actionMap.set("layout:heroCatalogs", () => {
+      const catalogSettings = model.homeCatalog || HomeCatalogStore.get();
+      const options = (catalogSettings.order || [])
+        .filter((key) => !catalogSettings.disabled?.includes(key))
+        .map((key) => ({
+          id: key,
+          label: catalogSettings.customTitles?.[key] || key.split("::").pop() || key
+        }));
+      this.openMultiChoiceDialog({
+        title: t("layout_hero_catalog", {}, "Hero catalogs"),
+        options,
+        selectedIds: model.layout.heroCatalogKeys || [],
+        returnFocusKey: "layout:heroCatalogs",
+        onToggle: (selectedIds) => LayoutPreferences.set({ heroCatalogKeys: selectedIds })
       });
+    });
+    this.actionMap.set("layout:searchDiscover", () => {
+      const options = [
+        { id: "in_search", labelKey: "layout_discover_location_in_search" },
+        { id: "in_sidebar", labelKey: "layout_discover_location_in_sidebar" },
+        { id: "off", labelKey: "common_off" }
+      ];
+      this.openOptionDialog({
+        title: t("layout_discover_location_dialog_title", {}, "Discover location"),
+        options,
+        selectedId: model.layout.discoverLocation || "in_search",
+        returnFocusKey: "layout:searchDiscover",
+        onSelect: (option) => LayoutPreferences.set({ discoverLocation: option.id })
+      });
+    });
+    this.actionMap.set("layout:classicFocusGradient", () =>
+      LayoutPreferences.set({
+        classicFocusGradientEnabled: !LayoutPreferences.get().classicFocusGradientEnabled
+      })
+    );
+    this.actionMap.set("layout:showFullReleaseDate", () =>
+      LayoutPreferences.set({ showFullReleaseDate: !LayoutPreferences.get().showFullReleaseDate })
+    );
+    this.actionMap.set("layout:detail:preferExternalMeta", () =>
+      LayoutPreferences.set({
+        preferExternalMetaAddonDetail: !LayoutPreferences.get().preferExternalMetaAddonDetail
+      })
+    );
+    this.actionMap.set("layout:continueWatchingCardStyle", () =>
+      this.openOptionDialog({
+        title: t("layout_cw_card_style", {}, "Continue Watching card style"),
+        options: ["card", "wide", "poster"].map((id) => ({
+          id,
+          labelKey: `layout_cw_card_style_${id}`
+        })),
+        selectedId: model.layout.continueWatchingCardStyle || "card",
+        returnFocusKey: "layout:continueWatchingCardStyle",
+        onSelect: (option) => LayoutPreferences.set({ continueWatchingCardStyle: option.id })
+      })
+    );
+    this.actionMap.set("layout:continueWatchingEnabled", () => {
+      LayoutPreferences.set({
+        continueWatchingEnabled: !LayoutPreferences.get().continueWatchingEnabled
+      });
+    });
+    const openNumberSetting = (focusKey, titleKey, field, values, fallback) =>
+      this.actionMap.set(focusKey, () =>
+        this.openOptionDialog({
+          title: t(titleKey, {}, titleKey),
+          options: values.map((value) => ({ id: String(value), label: String(value) })),
+          selectedId: String(model.layout[field] ?? fallback),
+          returnFocusKey: focusKey,
+          onSelect: (option) => LayoutPreferences.set({ [field]: Number(option.id) })
+        })
+      );
+    openNumberSetting(
+      "layout:posterWidth",
+      "layout_card_width",
+      "posterCardWidthDp",
+      [96, 108, 116, 126, 136, 146, 156, 168],
+      126
+    );
+    openNumberSetting(
+      "layout:posterRadius",
+      "layout_card_radius",
+      "posterCardCornerRadiusDp",
+      [0, 4, 8, 12, 16, 20, 24],
+      12
+    );
+    openNumberSetting(
+      "layout:cardDepthEdge",
+      "settings_card_depth_edge_value",
+      "cardDepthEdgeStrength",
+      [0, 10, 20, 28, 40, 60, 80, 100],
+      28
+    );
+    openNumberSetting(
+      "layout:cardDepthSheen",
+      "settings_card_depth_sheen_value",
+      "cardDepthSheenStrength",
+      [0, 10, 20, 40, 60, 80, 100],
+      10
+    );
+    openNumberSetting(
+      "layout:cardDepthCoverage",
+      "settings_card_depth_coverage_value",
+      "cardDepthEdgeCoverage",
+      [0, 25, 50, 75, 100],
+      0
+    );
+    [
+      "Enabled",
+      "PostersEnabled",
+      "ContinueWatchingEnabled",
+      "EpisodeCardsEnabled",
+      "CastEnabled",
+      "TrailersEnabled"
+    ].forEach((suffix) => {
+      const field = `cardDepth${suffix}`;
+      this.actionMap.set(`layout:${field}`, () =>
+        LayoutPreferences.set({ [field]: !LayoutPreferences.get()[field] })
+      );
     });
     this.actionMap.set("layout:hideUnreleased", () => {
       LayoutPreferences.set({
@@ -3265,6 +3817,11 @@ export const SettingsScreen = {
           id: "streaming_style",
           labelKey: "settings.layout.continueWatchingSort.streamingStyle",
           label: "Streaming Style"
+        },
+        {
+          id: "split_upcoming",
+          labelKey: "layout_cw_sort_split_upcoming",
+          label: "Separate Upcoming Row"
         }
       ];
       this.openOptionDialog({
@@ -3275,6 +3832,12 @@ export const SettingsScreen = {
         onSelect: (option) => {
           LayoutPreferences.set({ continueWatchingSortMode: String(option.id || "default") });
         }
+      });
+    });
+    this.actionMap.set("layout:homeImdbRatings", () => {
+      const current = LayoutPreferences.get().homeImdbRatingsVisibility;
+      LayoutPreferences.set({
+        homeImdbRatingsVisibility: current === "HIDE_ALL" ? "SHOW_ALL" : "HIDE_ALL"
       });
     });
     this.actionMap.set("layout:posterLabels", () => {
@@ -3368,13 +3931,15 @@ export const SettingsScreen = {
     const isModernLayout = selectedLayout === "modern";
     const isModernLandscape = isModernLayout && Boolean(model.layout.modernLandscapePostersEnabled);
     const cardExpansionEnabled = Boolean(model.layout.focusedPosterBackdropExpandEnabled);
-    const showAutoplayRow =
-      cardExpansionEnabled || isModernLandscape;
+    const showAutoplayRow = cardExpansionEnabled || isModernLandscape;
     const continueWatchingSortMode = String(model.layout.continueWatchingSortMode || "default");
     const continueWatchingSortLabel =
-      continueWatchingSortMode === "streaming_style"
-        ? t("settings.layout.continueWatchingSort.streamingStyle", {}, "Streaming Style")
-        : t("settings.layout.continueWatchingSort.default", {}, "Default");
+      continueWatchingSortMode === "split_upcoming"
+        ? t("layout_cw_sort_split_upcoming", {}, "Separate Upcoming Row")
+        : continueWatchingSortMode === "streaming_style"
+          ? t("settings.layout.continueWatchingSort.streamingStyle", {}, "Streaming Style")
+          : t("settings.layout.continueWatchingSort.default", {}, "Default");
+    const homeRatingsShown = model.layout.homeImdbRatingsVisibility !== "HIDE_ALL";
 
     const homeLayoutBody = `
       <div class="settings-stack">
@@ -3410,6 +3975,45 @@ export const SettingsScreen = {
       </div>
     `;
 
+    if (model.experience?.mode === "ESSENTIAL") {
+      return `
+        ${this.renderSectionHeader({
+          ...SECTION_META.find((item) => item.id === "layout"),
+          subtitleKey: "layout_selection_subtitle"
+        })}
+        <div class="settings-group-card"><div class="settings-stack">
+          ${homeLayoutBody}
+          ${
+            selectedLayout === "classic"
+              ? this.renderToggleRow({
+                  focusKey: "layout:classicFocusGradient",
+                  title: t("layout_classic_focus_gradient", {}, "Classic focus gradient"),
+                  subtitle: t(
+                    "layout_classic_focus_gradient_sub",
+                    {},
+                    "Show the focus gradient in Classic layout."
+                  ),
+                  checked: Boolean(model.layout.classicFocusGradientEnabled)
+                })
+              : ""
+          }
+          ${
+            !isModernLayout && model.layout.heroSectionEnabled
+              ? this.renderActionRow({
+                  focusKey: "layout:heroCatalogs",
+                  title: t("layout_hero_catalog", {}, "Hero catalogs"),
+                  subtitle: t(
+                    "layout_hero_catalog_sub",
+                    {},
+                    "Choose catalogs used by the Hero section."
+                  ),
+                  value: String(model.layout.heroCatalogKeys?.length || 0)
+                })
+              : ""
+          }
+        </div></div>`;
+    }
+
     const homeContentBody = `
       <div class="settings-stack">
         ${
@@ -3444,12 +4048,19 @@ export const SettingsScreen = {
           subtitle: t("settings.layout.heroSection.subtitle"),
           checked: Boolean(model.layout.heroSectionEnabled)
         })}
-        ${this.renderToggleRow({
+        ${model.layout.heroSectionEnabled ? this.renderActionRow({ focusKey: "layout:heroCatalogs", title: t("layout_hero_catalog", {}, "Hero catalogs"), subtitle: t("layout_hero_catalog_sub", {}, "Choose catalogs used by the Hero section"), value: model.layout.heroCatalogKeys?.length ? String(model.layout.heroCatalogKeys.length) : t("common_all", {}, "All") }) : ""}
+        ${this.renderActionRow({
           focusKey: "layout:searchDiscover",
-          title: t("settings.layout.searchDiscover.title"),
+          title: t("layout_discover_location_action", {}, "Discover location"),
           subtitle: t("settings.layout.searchDiscover.subtitle"),
-          checked: Boolean(model.layout.searchDiscoverEnabled)
+          value:
+            model.layout.discoverLocation === "in_sidebar"
+              ? t("layout_discover_location_in_sidebar")
+              : model.layout.discoverLocation === "off"
+                ? t("common.off", {}, "Off")
+                : t("layout_discover_location_in_search")
         })}
+        ${!isModernLayout ? this.renderToggleRow({ focusKey: "layout:classicFocusGradient", title: t("layout_classic_focus_gradient"), subtitle: t("layout_classic_focus_gradient_sub"), checked: Boolean(model.layout.classicFocusGradientEnabled) }) : ""}
         ${
           !isModernLayout
             ? this.renderToggleRow({
@@ -3482,11 +4093,25 @@ export const SettingsScreen = {
           subtitle: t("settings.layout.hideUnreleased.subtitle"),
           checked: Boolean(model.layout.hideUnreleasedContent)
         })}
+        ${this.renderToggleRow({
+          focusKey: "layout:homeImdbRatings",
+          title: t("layout_overall_ratings", {}, "Overall Ratings"),
+          subtitle: homeRatingsShown
+            ? t("layout_overall_ratings_sub_on", {}, "Standard and TMDB ratings are shown.")
+            : t(
+                "layout_overall_ratings_sub_off",
+                {},
+                "Standard and TMDB ratings are Hidden. MDBList provider settings take priority on detail pages."
+              ),
+          checked: homeRatingsShown
+        })}
       </div>
     `;
 
-    const continueWatchingBody = `
-      <div class="settings-stack">
+    const continueWatchingEnabled = model.layout.continueWatchingEnabled !== false;
+    const continueWatchingOptionsBody = continueWatchingEnabled
+      ? `
+        ${this.renderActionRow({ focusKey: "layout:continueWatchingCardStyle", title: t("layout_cw_card_style", {}, "Card style"), subtitle: t("layout_section_continue_watching_desc", {}, "Choose the Continue Watching card shape"), value: t(`layout_cw_card_style_${model.layout.continueWatchingCardStyle || "card"}`, {}, model.layout.continueWatchingCardStyle || "card") })}
         ${this.renderToggleRow({
           focusKey: "layout:useEpisodeThumbnailsInCw",
           title: t("settings.layout.useEpisodeThumbnailsInCw.title", {}, "Use Episode Thumbnails"),
@@ -3545,6 +4170,22 @@ export const SettingsScreen = {
           ),
           value: continueWatchingSortLabel
         })}
+      `
+      : "";
+
+    const continueWatchingBody = `
+      <div class="settings-stack">
+        ${this.renderToggleRow({
+          focusKey: "layout:continueWatchingEnabled",
+          title: t("settings.layout.continueWatchingEnabled.title", {}, "Show Continue Watching"),
+          subtitle: t(
+            "settings.layout.continueWatchingEnabled.subtitle",
+            {},
+            "Show Continue Watching and Upcoming rows on Home."
+          ),
+          checked: continueWatchingEnabled
+        })}
+        ${continueWatchingOptionsBody}
       </div>
     `;
 
@@ -3566,9 +4207,9 @@ export const SettingsScreen = {
           focusKey: "layout:detail:preferExternalMeta",
           title: t("settings.layout.preferExternalMeta.title"),
           subtitle: t("settings.layout.preferExternalMeta.subtitle"),
-          checked: false,
-          disabled: true
+          checked: model.layout.preferExternalMetaAddonDetail !== false
         })}
+        ${this.renderToggleRow({ focusKey: "layout:showFullReleaseDate", title: t("layout_show_full_release_date"), subtitle: t("layout_show_full_release_date_sub"), checked: model.layout.showFullReleaseDate !== false })}
       </div>
     `;
 
@@ -3642,6 +4283,37 @@ export const SettingsScreen = {
       </div>
     `;
 
+    const cardAppearanceBody = `
+      <div class="settings-stack">
+        ${this.renderActionRow({ focusKey: "layout:posterWidth", title: t("layout_card_width", {}, "Card width"), subtitle: t("layout_section_card_style_desc", {}, "Adjust poster card width"), value: String(model.layout.posterCardWidthDp) })}
+        ${this.renderActionRow({ focusKey: "layout:posterRadius", title: t("layout_card_radius", {}, "Card corner radius"), subtitle: t("layout_section_card_style_desc", {}, "Adjust poster card corner radius"), value: String(model.layout.posterCardCornerRadiusDp) })}
+        ${this.renderToggleRow({ focusKey: "layout:cardDepthEnabled", title: t("settings_card_depth_enabled", {}, "Enable depth effect"), subtitle: t("settings_card_depth_description", {}, "Add edge light and sheen to image cards"), checked: Boolean(model.layout.cardDepthEnabled) })}
+        ${
+          model.layout.cardDepthEnabled
+            ? `
+          ${this.renderActionRow({ focusKey: "layout:cardDepthEdge", title: t("settings_card_depth_edge_value", {}, "Edge glow"), value: `${model.layout.cardDepthEdgeStrength}%` })}
+          ${this.renderActionRow({ focusKey: "layout:cardDepthSheen", title: t("settings_card_depth_sheen_value", {}, "Sheen"), value: `${model.layout.cardDepthSheenStrength}%` })}
+          ${this.renderActionRow({ focusKey: "layout:cardDepthCoverage", title: t("settings_card_depth_coverage_value", {}, "Edge coverage"), value: `${model.layout.cardDepthEdgeCoverage}%` })}
+          ${[
+            ["PostersEnabled", "settings_card_depth_surface_posters"],
+            ["ContinueWatchingEnabled", "settings_card_depth_surface_continue_watching"],
+            ["EpisodeCardsEnabled", "settings_card_depth_surface_episodes"],
+            ["CastEnabled", "settings_card_depth_surface_cast"],
+            ["TrailersEnabled", "settings_card_depth_surface_trailers"]
+          ]
+            .map(([suffix, key]) =>
+              this.renderToggleRow({
+                focusKey: `layout:cardDepth${suffix}`,
+                title: t(key, {}, key),
+                checked: model.layout[`cardDepth${suffix}`] !== false
+              })
+            )
+            .join("")}
+        `
+            : ""
+        }
+      </div>`;
+
     return `
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "layout"))}
       <div class="settings-group-card settings-group-card-fill">
@@ -3685,17 +4357,43 @@ export const SettingsScreen = {
             expanded: Boolean(expanded.focusedPoster),
             bodyHtml: focusedPosterBody
           })}
+          ${this.renderCollapsibleRow({ focusKey: "layout:toggle:cardAppearance", title: t("settings_card_depth_title", {}, "Card appearance"), subtitle: t("settings_card_depth_description", {}, "Size, corners and depth surfaces"), expanded: Boolean(expanded.cardAppearance), bodyHtml: cardAppearanceBody })}
         </div>
       </div>
     `;
   },
 
-  renderPluginsSection() {
+  renderPluginsSection(model = {}) {
+    const summary = model.pluginSummary || PluginManager.getSummary();
+    const runtime = summary.runtime || {};
+    this.actionMap.set("plugins:open", async () => {
+      await Router.navigate("plugins");
+    });
     return `
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "plugins"))}
-      <div class="settings-group-card settings-group-card-fill">
-        <div class="settings-empty-state settings-empty-state-plugins">
-          <p class="settings-plugin-soon-text">Plugin support is coming soon.</p>
+      <div class="settings-group-card">
+        <div class="settings-stack">
+          ${this.renderActionRow({
+            focusKey: "plugins:open",
+            title: t("plugin_title", {}, "Plugins"),
+            subtitle: t(
+              "settings.plugins.openSubtitle",
+              {},
+              "Manage executable Nuvio JS providers and preserved external metadata"
+            ),
+            value: `${Number(summary.repositories?.length || 0)} · ${Number(summary.scrapers?.length || 0)}`,
+            icon: "chevron"
+          })}
+          <div class="settings-subsection-card">
+            <div class="settings-group-heading">
+              <div>
+                <div class="settings-group-title">${escapeHtml(t("plugin_runtime_heading", {}, "TV plugin runtime"))}</div>
+                <div class="settings-group-subtitle">${escapeHtml(runtime.executable ? t("plugin_runtime_ready", {}, "Runtime ready") : runtime.reason || t("plugin_runtime_unsupported", {}, "Execution unavailable on this TV runtime"))}</div>
+              </div>
+              <span class="settings-row-value">${escapeHtml(t("plugin_providers_count", { count: Number(summary.scrapers?.length || 0) }, `${Number(summary.scrapers?.length || 0)} providers`))}</span>
+            </div>
+          </div>
+          <p class="settings-row-subtitle">${escapeHtml(t("plugin_runtime_tv_only", {}, "Only Nuvio JS repositories execute. CloudStream DEX and legacy URL-template sources are retained for display but never executed or converted."))}</p>
         </div>
       </div>
     `;
@@ -3723,16 +4421,20 @@ export const SettingsScreen = {
             ),
             leadingIcon: "grid_view"
           })}
-          ${this.renderActionRow({
-            focusKey: "contentDiscovery:plugins",
-            title: t("plugin_title", {}, "Plugins"),
-            subtitle: t(
-              "settings.contentDiscovery.pluginsSubtitle",
-              {},
-              "Manage repositories and stream providers"
-            ),
-            leadingIcon: "build"
-          })}
+          ${
+            ExperienceModeStore.isEssential()
+              ? ""
+              : this.renderActionRow({
+                  focusKey: "contentDiscovery:plugins",
+                  title: t("plugin_title", {}, "Plugins"),
+                  subtitle: t(
+                    "settings.contentDiscovery.pluginsSubtitle",
+                    {},
+                    "Manage repositories and stream providers"
+                  ),
+                  leadingIcon: "build"
+                })
+          }
         </div>
       </div>
     `;
@@ -3816,7 +4518,9 @@ export const SettingsScreen = {
       const hasCloudLibraryProvider = configuredProviders.some((provider) =>
         provider.capabilities?.includes?.("cloudLibrary")
       );
-      const canUseCloudLibrary = Boolean(model.debrid.cloudLibraryEnabled && hasCloudLibraryProvider);
+      const canUseCloudLibrary = Boolean(
+        model.debrid.cloudLibraryEnabled && hasCloudLibraryProvider
+      );
       const streamPreferences = normalizeDebridStreamPreferences(model.debrid.streamPreferences);
       const resolverOptions = resolverProviders.map((provider) => ({
         id: provider.id,
@@ -3847,6 +4551,10 @@ export const SettingsScreen = {
       });
       providers.forEach((provider) => {
         this.actionMap.set(`integration:debrid:key:${provider.id}`, () => {
+          if (provider.authMethod === DEBRID_AUTH_METHODS.DEVICE_CODE) {
+            this.openDebridDeviceAuthDialog(provider);
+            return;
+          }
           const current = DebridProviders.apiKeyFor(DebridSettingsStore.get(), provider.id);
           this.openTextDialog({
             title: t(
@@ -3890,8 +4598,7 @@ export const SettingsScreen = {
           options: DEBRID_MAX_RESULTS_OPTIONS,
           selectedId: streamPreferences.maxResults,
           returnFocusKey: "integration:debrid:maxResults",
-          onSelect: (option) =>
-            DebridSettingsStore.setStreamMaxResults(Number(option.id || 0))
+          onSelect: (option) => DebridSettingsStore.setStreamMaxResults(Number(option.id || 0))
         });
       });
       this.actionMap.set("integration:debrid:sort", () => {
@@ -4125,14 +4832,25 @@ export const SettingsScreen = {
                 this.renderActionRow({
                   focusKey: `integration:debrid:key:${provider.id}`,
                   title: provider.displayName,
-                  subtitle: t(
-                    "settings.integration.debrid.providerDescription",
-                    { provider: provider.displayName },
-                    `Connect your ${provider.displayName} account.`
-                  ),
+                  subtitle:
+                    provider.authMethod === DEBRID_AUTH_METHODS.DEVICE_CODE
+                      ? t(
+                          "debrid_provider_device_description",
+                          { provider: provider.displayName },
+                          `Link your ${provider.displayName} account in the browser.`
+                        )
+                      : t(
+                          "settings.integration.debrid.providerDescription",
+                          { provider: provider.displayName },
+                          `Connect your ${provider.displayName} account.`
+                        ),
                   value: maskValue(
-                    DebridProviders.apiKeyFor(model.debrid, provider.id),
-                    t("settings.integration.debrid.notSet", {}, "Not set")
+                    provider.authMethod === DEBRID_AUTH_METHODS.DEVICE_CODE
+                      ? ""
+                      : DebridProviders.apiKeyFor(model.debrid, provider.id),
+                    DebridProviders.apiKeyFor(model.debrid, provider.id)
+                      ? t("debrid_connected", {}, "Connected")
+                      : t("settings.integration.debrid.notSet", {}, "Not set")
                   ),
                   icon: "chevron"
                 })
@@ -4158,7 +4876,11 @@ export const SettingsScreen = {
                     Number(model.debrid.instantPlaybackPreparationLimit || 0) > 0
                       ? this.renderActionRow({
                           focusKey: "integration:debrid:prepareCount",
-                          title: t("settings.integration.debrid.prepare.count.title", {}, "Links to prepare"),
+                          title: t(
+                            "settings.integration.debrid.prepare.count.title",
+                            {},
+                            "Links to prepare"
+                          ),
                           value: labelForOption(
                             DEBRID_PREPARE_COUNT_OPTIONS,
                             model.debrid.instantPlaybackPreparationLimit,
@@ -4228,7 +4950,11 @@ export const SettingsScreen = {
                       {},
                       "Limit how many Direct Debrid sources appear."
                     ),
-                    value: labelForOption(DEBRID_MAX_RESULTS_OPTIONS, streamPreferences.maxResults, "All streams")
+                    value: labelForOption(
+                      DEBRID_MAX_RESULTS_OPTIONS,
+                      streamPreferences.maxResults,
+                      "All streams"
+                    )
                   })}
                   ${this.renderActionRow({
                     focusKey: "integration:debrid:sort",
@@ -4242,13 +4968,21 @@ export const SettingsScreen = {
                   })}
                   ${this.renderActionRow({
                     focusKey: "integration:debrid:maxPerResolution",
-                    title: t("debrid_stream_per_resolution_limit_title", {}, "Per resolution limit"),
+                    title: t(
+                      "debrid_stream_per_resolution_limit_title",
+                      {},
+                      "Per resolution limit"
+                    ),
                     subtitle: t(
                       "debrid_stream_per_resolution_limit_subtitle",
                       {},
                       "Cap repeated 2160p, 1080p, 720p results after sorting."
                     ),
-                    value: labelForOption(DEBRID_MAX_RESULTS_OPTIONS, streamPreferences.maxPerResolution, "All streams")
+                    value: labelForOption(
+                      DEBRID_MAX_RESULTS_OPTIONS,
+                      streamPreferences.maxPerResolution,
+                      "All streams"
+                    )
                   })}
                   ${this.renderActionRow({
                     focusKey: "integration:debrid:maxPerQuality",
@@ -4258,13 +4992,24 @@ export const SettingsScreen = {
                       {},
                       "Cap repeated BluRay, WEB-DL, REMUX results after sorting."
                     ),
-                    value: labelForOption(DEBRID_MAX_RESULTS_OPTIONS, streamPreferences.maxPerQuality, "All streams")
+                    value: labelForOption(
+                      DEBRID_MAX_RESULTS_OPTIONS,
+                      streamPreferences.maxPerQuality,
+                      "All streams"
+                    )
                   })}
                   ${this.renderActionRow({
                     focusKey: "integration:debrid:sizeRange",
                     title: t("debrid_stream_size_range_title", {}, "Size range"),
-                    subtitle: t("debrid_stream_size_range_subtitle", {}, "Filter streams by file size."),
-                    value: debridSizeRangeLabel(streamPreferences.sizeMinGb, streamPreferences.sizeMaxGb)
+                    subtitle: t(
+                      "debrid_stream_size_range_subtitle",
+                      {},
+                      "Filter streams by file size."
+                    ),
+                    value: debridSizeRangeLabel(
+                      streamPreferences.sizeMinGb,
+                      streamPreferences.sizeMaxGb
+                    )
                   })}
                   ${debridRuleRows(streamPreferences)
                     .map((row) =>
@@ -4417,7 +5162,11 @@ export const SettingsScreen = {
             ${this.renderToggleRow({
               focusKey: "integration:tmdb:credits",
               title: t("tmdb_credits_title", {}, "Credits"),
-              subtitle: t("tmdb_credits_subtitle", {}, "Cast with photos, director, and writer from TMDB"),
+              subtitle: t(
+                "tmdb_credits_subtitle",
+                {},
+                "Cast with photos, director, and writer from TMDB"
+              ),
               checked: model.tmdb.useCredits !== false,
               disabled: !model.tmdb.enabled
             })}
@@ -4460,14 +5209,22 @@ export const SettingsScreen = {
             ${this.renderToggleRow({
               focusKey: "integration:tmdb:moreLikeThis",
               title: t("tmdb_more_like_this_title", {}, "More Like This"),
-              subtitle: t("tmdb_more_like_this_subtitle", {}, "TMDB recommendation backdrops on detail page"),
+              subtitle: t(
+                "tmdb_more_like_this_subtitle",
+                {},
+                "TMDB recommendation backdrops on detail page"
+              ),
               checked: model.tmdb.useMoreLikeThis !== false,
               disabled: !model.tmdb.enabled
             })}
             ${this.renderToggleRow({
               focusKey: "integration:tmdb:collections",
               title: t("tmdb_collections_title", {}, "Collections"),
-              subtitle: t("tmdb_collections_subtitle", {}, "TMDB movie collections in release order"),
+              subtitle: t(
+                "tmdb_collections_subtitle",
+                {},
+                "TMDB movie collections in release order"
+              ),
               checked: model.tmdb.useCollections !== false,
               disabled: !model.tmdb.enabled
             })}
@@ -4505,9 +5262,7 @@ export const SettingsScreen = {
               const valid = await mdbListRepository.validateApiKey(trimmed);
               if (!valid) {
                 if (this.textDialog) {
-                  this.textDialog.statusMessage = t(
-                    "settings.integration.mdblist.invalidApiKey"
-                  );
+                  this.textDialog.statusMessage = t("settings.integration.mdblist.invalidApiKey");
                   this.textDialog.statusKind = "error";
                 }
                 return false;
@@ -4525,7 +5280,8 @@ export const SettingsScreen = {
         ["letterboxd", "showLetterboxd"],
         ["tomatoes", "showTomatoes"],
         ["audience", "showAudience"],
-        ["metacritic", "showMetacritic"]
+        ["metacritic", "showMetacritic"],
+        ["mal", "showMal"]
       ].forEach(([provider, field]) => {
         this.actionMap.set(`integration:mdblist:${provider}`, () => toggleMdbListSetting(field));
       });
@@ -4560,7 +5316,8 @@ export const SettingsScreen = {
               ["letterboxd", "showLetterboxd"],
               ["tomatoes", "showTomatoes"],
               ["audience", "showAudience"],
-              ["metacritic", "showMetacritic"]
+              ["metacritic", "showMetacritic"],
+              ["mal", "showMal"]
             ]
               .map(([provider, field]) =>
                 this.renderToggleRow({
@@ -4936,6 +5693,10 @@ export const SettingsScreen = {
     this.ensureExpandedState("playback");
     const expanded = this.expandedSections.playback;
     const torrentSettings = model.torrent || TorrentSettingsStore.get();
+    const tizenP2pUnsupported = TizenCapabilities.isP2pUnsupported();
+    const p2pUnavailableSubtitle = tizenP2pUnsupported
+      ? t("settings_p2p_unsupported_subtitle", {}, "Not supported on this TV.")
+      : t("settings_p2p_subtitle");
 
     this.actionMap.set("playback:toggle:general", () => {
       this.toggleExpandedSection("playback", "general");
@@ -4956,6 +5717,26 @@ export const SettingsScreen = {
     this.actionMap.set("playback:autoplay", () => {
       PlayerSettingsStore.set({
         autoplayNextEpisode: !PlayerSettingsStore.get().autoplayNextEpisode
+      });
+    });
+    this.actionMap.set("playback:postPlayRecommendations", () => {
+      PlayerSettingsStore.set({
+        postPlayRecommendationsEnabled: !PlayerSettingsStore.get().postPlayRecommendationsEnabled
+      });
+    });
+    this.actionMap.set("playback:postPlayMovieThreshold", () => {
+      const current = PlayerSettingsStore.get().postPlayMovieThresholdPercent ?? 90;
+      this.openOptionDialog({
+        title: t("autoplay_post_play_movie_threshold", {}, "Movie Recommendation Timing"),
+        options: Array.from({ length: 21 }, (_, index) => {
+          const value = 80 + index;
+          return { id: value, label: `${value}%` };
+        }),
+        selectedId: current,
+        returnFocusKey: "playback:postPlayMovieThreshold",
+        onSelect: (option) => {
+          PlayerSettingsStore.set({ postPlayMovieThresholdPercent: Number(option.id) });
+        }
       });
     });
     this.actionMap.set("playback:preferBingeGroup", () => {
@@ -4991,8 +5772,44 @@ export const SettingsScreen = {
     this.actionMap.set("playback:trailer", () => {
       PlayerSettingsStore.set({ trailerAutoplay: !PlayerSettingsStore.get().trailerAutoplay });
     });
+    this.actionMap.set("playback:trailerDelay", () =>
+      this.openOptionDialog({
+        title: t("audio_trailer_delay", {}, "Trailer delay"),
+        options: Array.from({ length: 16 }, (_, value) => ({
+          id: String(value),
+          label: `${value}s`
+        })),
+        selectedId: String(model.player.trailerDelaySeconds ?? 7),
+        returnFocusKey: "playback:trailerDelay",
+        onSelect: (option) => PlayerSettingsStore.set({ trailerDelaySeconds: Number(option.id) })
+      })
+    );
     this.actionMap.set("playback:skipIntro", () => {
       PlayerSettingsStore.set({ skipIntroEnabled: !PlayerSettingsStore.get().skipIntroEnabled });
+    });
+    const togglePlayerSetting = (focusKey, field) =>
+      this.actionMap.set(focusKey, () =>
+        PlayerSettingsStore.set({ [field]: !PlayerSettingsStore.get()[field] })
+      );
+    togglePlayerSetting("playback:loadingOverlay", "loadingOverlayEnabled");
+    togglePlayerSetting("playback:loadingStatus", "showPlayerLoadingStatus");
+    togglePlayerSetting("playback:minimalBufferingUi", "minimalBufferingUiEnabled");
+    togglePlayerSetting("playback:pauseOverlay", "pauseOverlayEnabled");
+    togglePlayerSetting("playback:parentalGuide", "parentalGuideEnabled");
+    ["intro", "recap", "outro"].forEach((type) =>
+      this.actionMap.set(`playback:autoSkip:${type}`, () => {
+        const current = PlayerSettingsStore.get().autoSkipSegmentTypes || [];
+        PlayerSettingsStore.set({
+          autoSkipSegmentTypes: current.includes(type)
+            ? current.filter((entry) => entry !== type)
+            : [...current, type]
+        });
+      })
+    );
+    this.actionMap.set("playback:osdClock", () => {
+      PlayerSettingsStore.set({
+        osdClockEnabled: !PlayerSettingsStore.get().osdClockEnabled
+      });
     });
     this.actionMap.set("playback:forceDts", () => {
       const current = WebOsAudioCompatibilityStore.get();
@@ -5018,17 +5835,30 @@ export const SettingsScreen = {
       });
     });
     this.actionMap.set("playback:nextEpisodeThresholdValue", () => {
-      const mode = String(PlayerSettingsStore.get().nextEpisodeThresholdMode || "PERCENTAGE").toUpperCase();
-      const options = mode === "MINUTES_BEFORE_END"
-        ? NEXT_EPISODE_THRESHOLD_MINUTE_OPTIONS
-        : NEXT_EPISODE_THRESHOLD_PERCENT_OPTIONS;
-      const selectedId = mode === "MINUTES_BEFORE_END"
-        ? PlayerSettingsStore.get().nextEpisodeThresholdMinutesBeforeEnd
-        : PlayerSettingsStore.get().nextEpisodeThresholdPercent;
+      const mode = String(
+        PlayerSettingsStore.get().nextEpisodeThresholdMode || "PERCENTAGE"
+      ).toUpperCase();
+      const options =
+        mode === "MINUTES_BEFORE_END"
+          ? NEXT_EPISODE_THRESHOLD_MINUTE_OPTIONS
+          : NEXT_EPISODE_THRESHOLD_PERCENT_OPTIONS;
+      const selectedId =
+        mode === "MINUTES_BEFORE_END"
+          ? PlayerSettingsStore.get().nextEpisodeThresholdMinutesBeforeEnd
+          : PlayerSettingsStore.get().nextEpisodeThresholdPercent;
       this.openOptionDialog({
-        title: mode === "MINUTES_BEFORE_END"
-          ? t("settings.playback.nextEpisodeThresholdMinutes.title", {}, "Next episode minutes before end")
-          : t("settings.playback.nextEpisodeThresholdPercent.title", {}, "Next episode percentage"),
+        title:
+          mode === "MINUTES_BEFORE_END"
+            ? t(
+                "settings.playback.nextEpisodeThresholdMinutes.title",
+                {},
+                "Next episode minutes before end"
+              )
+            : t(
+                "settings.playback.nextEpisodeThresholdPercent.title",
+                {},
+                "Next episode percentage"
+              ),
         options,
         selectedId,
         returnFocusKey: "playback:nextEpisodeThresholdValue",
@@ -5043,7 +5873,9 @@ export const SettingsScreen = {
       });
     });
     this.actionMap.set("playback:stillWatching", () => {
-      PlayerSettingsStore.set({ stillWatchingEnabled: !PlayerSettingsStore.get().stillWatchingEnabled });
+      PlayerSettingsStore.set({
+        stillWatchingEnabled: !PlayerSettingsStore.get().stillWatchingEnabled
+      });
     });
     this.actionMap.set("playback:stillWatchingThreshold", () => {
       this.openOptionDialog({
@@ -5111,21 +5943,25 @@ export const SettingsScreen = {
         options,
         selectedIds: PlayerSettingsStore.get().streamAutoPlaySelectedAddons,
         returnFocusKey: "playback:autoStreamAddons",
-        onToggle: (selectedIds) => PlayerSettingsStore.set({ streamAutoPlaySelectedAddons: selectedIds })
+        onToggle: (selectedIds) =>
+          PlayerSettingsStore.set({ streamAutoPlaySelectedAddons: selectedIds })
       });
     });
     this.actionMap.set("playback:autoStreamPlugins", () => {
-      const options = PluginManager.listPluginSources()
-        .filter((source) => source?.enabled !== false)
-        .map((source) => String(source?.name || "").trim())
+      const options = (PluginManager.pluginsEnabled ? PluginManager.listScrapers() : [])
+        .filter((scraper) => scraper?.type === "NUVIO_JS" && scraper?.enabled !== false)
+        .map((scraper) => String(scraper?.name || "").trim())
         .filter(Boolean)
+        .filter((name, index, names) => names.indexOf(name) === index)
+        .sort((left, right) => left.localeCompare(right))
         .map((name) => ({ id: name, label: name }));
       this.openMultiChoiceDialog({
         title: t("autoplay_allowed_plugins", {}, "Allowed Plugins"),
         options,
         selectedIds: PlayerSettingsStore.get().streamAutoPlaySelectedPlugins,
         returnFocusKey: "playback:autoStreamPlugins",
-        onToggle: (selectedIds) => PlayerSettingsStore.set({ streamAutoPlaySelectedPlugins: selectedIds })
+        onToggle: (selectedIds) =>
+          PlayerSettingsStore.set({ streamAutoPlaySelectedPlugins: selectedIds })
       });
     });
     this.actionMap.set("playback:audioLanguage", () => {
@@ -5139,8 +5975,16 @@ export const SettingsScreen = {
         }
       });
     });
-    this.actionMap.set("playback:subtitlesEnabled", () => {
-      PlayerSettingsStore.set({ subtitlesEnabled: !PlayerSettingsStore.get().subtitlesEnabled });
+    this.actionMap.set("playback:secondaryAudioLanguage", () => {
+      this.openOptionDialog({
+        title: t("sub_secondary_lang", {}, "Secondary Preferred Language"),
+        options: SECONDARY_PLAYBACK_LANGUAGE_OPTIONS,
+        selectedId: PlayerSettingsStore.get().secondaryPreferredAudioLanguage,
+        returnFocusKey: "playback:secondaryAudioLanguage",
+        onSelect: (option) => {
+          PlayerSettingsStore.set({ secondaryPreferredAudioLanguage: option.id });
+        }
+      });
     });
     this.actionMap.set("playback:useForcedSubtitles", () => {
       const currentSettings = PlayerSettingsStore.get();
@@ -5153,10 +5997,20 @@ export const SettingsScreen = {
     });
     this.actionMap.set("playback:showOnlyPreferredSubtitleLanguages", () => {
       const currentSettings = PlayerSettingsStore.get();
+      const enabled = !currentSettings.subtitleStyle?.showOnlyPreferredLanguages;
+      const currentStartupMode = currentSettings.addonSubtitleStartupMode || "ALL_SUBTITLES";
+      const autoPreferred = Boolean(currentSettings.addonSubtitleStartupModeAutoPreferred);
       PlayerSettingsStore.set({
+        addonSubtitleStartupMode:
+          enabled && currentStartupMode === "ALL_SUBTITLES"
+            ? "PREFERRED_ONLY"
+            : !enabled && autoPreferred && currentStartupMode === "PREFERRED_ONLY"
+              ? "ALL_SUBTITLES"
+              : currentStartupMode,
+        addonSubtitleStartupModeAutoPreferred: enabled && currentStartupMode === "ALL_SUBTITLES",
         subtitleStyle: {
           ...currentSettings.subtitleStyle,
-          showOnlyPreferredLanguages: !currentSettings.subtitleStyle?.showOnlyPreferredLanguages
+          showOnlyPreferredLanguages: enabled
         }
       });
     });
@@ -5175,6 +6029,7 @@ export const SettingsScreen = {
         onSelect: (option) => {
           const normalized = normalizeSelectableSubtitleLanguageCode(option.id);
           PlayerSettingsStore.set({
+            subtitlesEnabled: true,
             subtitleLanguage: normalized,
             subtitleStyle: {
               ...currentSettings.subtitleStyle,
@@ -5184,6 +6039,42 @@ export const SettingsScreen = {
         }
       });
     });
+    this.actionMap.set("playback:secondarySubtitleLanguage", () => {
+      const currentSettings = PlayerSettingsStore.get();
+      this.openOptionDialog({
+        title: t("sub_secondary_lang", {}, "Secondary subtitle language"),
+        options: PREFERRED_SUBTITLE_LANGUAGE_OPTIONS,
+        selectedId: currentSettings.secondarySubtitleLanguage || "off",
+        returnFocusKey: "playback:secondarySubtitleLanguage",
+        dialogClassName: "settings-language-dialog",
+        optionRenderer: "subtitle-language",
+        onSelect: (option) =>
+          PlayerSettingsStore.set({
+            secondarySubtitleLanguage: option.id,
+            subtitleStyle: {
+              ...currentSettings.subtitleStyle,
+              secondaryPreferredLanguage: option.id
+            }
+          })
+      });
+    });
+    this.actionMap.set("playback:subtitleStartupMode", () =>
+      this.openOptionDialog({
+        title: t("sub_startup_mode_title", {}, "Subtitle startup mode"),
+        options: [
+          { id: "FAST_STARTUP", labelKey: "sub_startup_mode_fast" },
+          { id: "PREFERRED_ONLY", labelKey: "sub_startup_mode_preferred" },
+          { id: "ALL_SUBTITLES", labelKey: "sub_startup_mode_all" }
+        ],
+        selectedId: model.player.addonSubtitleStartupMode || "ALL_SUBTITLES",
+        returnFocusKey: "playback:subtitleStartupMode",
+        onSelect: (option) =>
+          PlayerSettingsStore.set({
+            addonSubtitleStartupMode: option.id,
+            addonSubtitleStartupModeAutoPreferred: false
+          })
+      })
+    );
     this.actionMap.set("playback:renderMode", () => {
       this.openOptionDialog({
         title: t("settings.dialogs.subtitleRenderMode"),
@@ -5220,8 +6111,8 @@ export const SettingsScreen = {
         title: t("settings.playback.subtitleOffset.title", {}, "Subtitle position"),
         options: SUBTITLE_OFFSET_OPTIONS,
         selectedId: clampSubtitleOffset(
-          PlayerSettingsStore.get().subtitleStyle?.verticalOffset
-            ?? SUBTITLE_VERTICAL_OFFSET_DEFAULT
+          PlayerSettingsStore.get().subtitleStyle?.verticalOffset ??
+            SUBTITLE_VERTICAL_OFFSET_DEFAULT
         ),
         returnFocusKey: "playback:subtitleOffset",
         onSelect: (option) => {
@@ -5236,21 +6127,54 @@ export const SettingsScreen = {
       this.openOptionDialog({
         title: t("settings.playback.subtitleTextColor.title", {}, "Subtitle color"),
         options: SUBTITLE_TEXT_COLOR_OPTIONS,
-        selectedId: normalizeSubtitleStyleHex(PlayerSettingsStore.get().subtitleStyle?.textColor, "#FFFFFF"),
+        selectedId: normalizeSubtitleStyleHex(
+          PlayerSettingsStore.get().subtitleStyle?.textColor,
+          "#FFFFFF"
+        ),
         returnFocusKey: "playback:subtitleTextColor",
         onSelect: (option) => {
           updateSubtitleStyle({ textColor: normalizeSubtitleStyleHex(option.id, "#FFFFFF") });
         }
       });
     });
+    this.actionMap.set("playback:subtitleTextOpacity", () => {
+      this.openOptionDialog({
+        title: t("subtitle_style_text_opacity", {}, "Text Opacity"),
+        options: SUBTITLE_TEXT_OPACITY_OPTIONS,
+        selectedId: clampSubtitleTextOpacity(PlayerSettingsStore.get().subtitleStyle?.textOpacity),
+        returnFocusKey: "playback:subtitleTextOpacity",
+        onSelect: (option) => {
+          updateSubtitleStyle({ textOpacity: clampSubtitleTextOpacity(option.id) });
+        }
+      });
+    });
+    this.actionMap.set("playback:subtitleBackgroundColor", () =>
+      this.openOptionDialog({
+        title: t("sub_bg_color", {}, "Subtitle background color"),
+        options: [
+          { id: "#00000000", labelKey: "common_off" },
+          { id: "#00000080", label: "50%" },
+          { id: "#000000CC", label: "80%" },
+          { id: "#000000", label: "100%" }
+        ],
+        selectedId: PlayerSettingsStore.get().subtitleStyle?.backgroundColor || "#00000000",
+        returnFocusKey: "playback:subtitleBackgroundColor",
+        onSelect: (option) => updateSubtitleStyle({ backgroundColor: option.id })
+      })
+    );
     this.actionMap.set("playback:subtitleOutline", () => {
-      updateSubtitleStyle({ outlineEnabled: !PlayerSettingsStore.get().subtitleStyle?.outlineEnabled });
+      updateSubtitleStyle({
+        outlineEnabled: !PlayerSettingsStore.get().subtitleStyle?.outlineEnabled
+      });
     });
     this.actionMap.set("playback:subtitleOutlineColor", () => {
       this.openOptionDialog({
         title: t("settings.playback.subtitleOutlineColor.title", {}, "Outline color"),
         options: SUBTITLE_OUTLINE_COLOR_OPTIONS,
-        selectedId: normalizeSubtitleStyleHex(PlayerSettingsStore.get().subtitleStyle?.outlineColor, "#000000"),
+        selectedId: normalizeSubtitleStyleHex(
+          PlayerSettingsStore.get().subtitleStyle?.outlineColor,
+          "#000000"
+        ),
         returnFocusKey: "playback:subtitleOutlineColor",
         onSelect: (option) => {
           updateSubtitleStyle({ outlineColor: normalizeSubtitleStyleHex(option.id, "#000000") });
@@ -5258,6 +6182,9 @@ export const SettingsScreen = {
       });
     });
     this.actionMap.set("playback:p2pEnabled", () => {
+      if (TizenCapabilities.isP2pUnsupported()) {
+        return;
+      }
       const current = TorrentSettingsStore.get();
       if (current.p2pEnabled) {
         TorrentSettingsStore.setP2pEnabled(false);
@@ -5282,8 +6209,106 @@ export const SettingsScreen = {
       });
     });
     this.actionMap.set("playback:hideTorrentStats", () => {
+      if (TizenCapabilities.isP2pUnsupported()) {
+        return;
+      }
       TorrentSettingsStore.setHideTorrentStats(!TorrentSettingsStore.get().hideTorrentStats);
     });
+
+    if (model.experience?.mode === "ESSENTIAL") {
+      this.actionMap.set("playback:autoStreamMode", () => {
+        const current = String(PlayerSettingsStore.get().streamAutoPlayMode || "MANUAL");
+        PlayerSettingsStore.set({
+          streamAutoPlayMode: current === "MANUAL" ? "FIRST_STREAM" : "MANUAL"
+        });
+      });
+      const preferredSubtitle =
+        model.player.subtitleStyle?.preferredLanguage || model.player.subtitleLanguage || "off";
+      return `
+        ${this.renderSectionHeader({
+          ...SECTION_META.find((item) => item.id === "playback"),
+          labelKey: "essential_playback_header_title",
+          subtitleKey: "essential_playback_header_subtitle"
+        })}
+        <div class="settings-group-heading"><div class="settings-group-title">${escapeHtml(t("essential_playback_basics", {}, "Playback basics"))}</div></div>
+        <div class="settings-group-card"><div class="settings-stack">
+          ${this.renderActionRow({
+            focusKey: "playback:autoStreamMode",
+            title: t("essential_stream_selection", {}, "Stream selection"),
+            subtitle: t(
+              "essential_stream_selection_subtitle",
+              {},
+              "Choose streams manually or play the first available stream."
+            ),
+            value:
+              String(model.player.streamAutoPlayMode || "MANUAL") === "FIRST_STREAM"
+                ? t("stream_auto_play_first_stream", {}, "First stream")
+                : t("stream_auto_play_manual_short", {}, "Manual")
+          })}
+          ${this.renderToggleRow({
+            focusKey: "playback:autoplay",
+            title: t("essential_autoplay_next_episode", {}, "Autoplay next episode"),
+            subtitle: t(
+              "essential_autoplay_next_episode_subtitle",
+              {},
+              "Automatically continue to the next episode."
+            ),
+            checked: Boolean(model.player.autoplayNextEpisode)
+          })}
+          ${this.renderToggleRow({
+            focusKey: "playback:postPlayRecommendations",
+            title: t("autoplay_post_play_recommendations", {}, "Post-play Recommendations"),
+            subtitle: t(
+              "autoplay_post_play_recommendations_sub",
+              {},
+              "Show recommendations near the end of movies and series."
+            ),
+            checked: model.player.postPlayRecommendationsEnabled !== false
+          })}
+          ${this.renderToggleRow({
+            focusKey: "playback:p2pEnabled",
+            title: t("essential_p2p_streams", {}, "P2P streams"),
+            subtitle: tizenP2pUnsupported
+              ? p2pUnavailableSubtitle
+              : t("essential_p2p_streams_subtitle", {}, "Allow peer-to-peer stream playback."),
+            checked: tizenP2pUnsupported ? false : Boolean(torrentSettings.p2pEnabled),
+            disabled: tizenP2pUnsupported
+          })}
+        </div></div>
+        <div class="settings-group-heading"><div class="settings-group-title">${escapeHtml(t("essential_subtitles_and_audio", {}, "Subtitles & audio"))}</div></div>
+        <div class="settings-group-card"><div class="settings-stack">
+          ${this.renderActionRow({
+            focusKey: "playback:subtitleLanguage",
+            title: t("essential_subtitle_language", {}, "Subtitle language"),
+            subtitle: t(
+              "essential_subtitle_language_subtitle",
+              {},
+              "Choose your preferred subtitle language."
+            ),
+            value: preferredSubtitle
+          })}
+          ${this.renderToggleRow({
+            focusKey: "playback:useForcedSubtitles",
+            title: t("sub_use_forced_subtitles", {}, "Use forced subtitles"),
+            subtitle: t(
+              "sub_use_forced_subtitles_desc",
+              {},
+              "Prefer forced subtitles when available."
+            ),
+            checked: Boolean(model.player.subtitleStyle?.useForcedSubtitles)
+          })}
+          ${this.renderActionRow({
+            focusKey: "playback:audioLanguage",
+            title: t("essential_audio_language", {}, "Audio language"),
+            subtitle: t(
+              "essential_audio_language_subtitle",
+              {},
+              "Choose your preferred audio language."
+            ),
+            value: String(model.player.preferredAudioLanguage || "")
+          })}
+        </div></div>`;
+    }
 
     const generalBody = `
       <div class="settings-stack">
@@ -5294,17 +6319,53 @@ export const SettingsScreen = {
           checked: Boolean(model.player.autoplayNextEpisode)
         })}
         ${this.renderToggleRow({
+          focusKey: "playback:postPlayRecommendations",
+          title: t("autoplay_post_play_recommendations", {}, "Post-play Recommendations"),
+          subtitle: t(
+            "autoplay_post_play_recommendations_sub",
+            {},
+            "Show recommendations near the end of movies and series."
+          ),
+          checked: model.player.postPlayRecommendationsEnabled !== false
+        })}
+        ${
+          model.player.postPlayRecommendationsEnabled !== false
+            ? this.renderActionRow({
+                focusKey: "playback:postPlayMovieThreshold",
+                title: t("autoplay_post_play_movie_threshold", {}, "Movie Recommendation Timing"),
+                subtitle: t(
+                  "autoplay_post_play_movie_threshold_sub",
+                  {},
+                  "Choose when movie recommendations appear. Episodes follow the Next Episode Threshold setting."
+                ),
+                value: `${model.player.postPlayMovieThresholdPercent ?? 90}%`
+              })
+            : ""
+        }
+        ${this.renderToggleRow({
           focusKey: "playback:preferBingeGroup",
           title: t("autoplay_prefer_binge_group", {}, "Prefer Binge Group (Next Episode)"),
-          subtitle: t("autoplay_prefer_binge_group_sub", {}, "Try the same source profile first before normal auto-play rules."),
+          subtitle: t(
+            "autoplay_prefer_binge_group_sub",
+            {},
+            "Try the same source profile first before normal auto-play rules."
+          ),
           checked: Boolean(model.player.streamAutoPlayPreferBingeGroupForNextEpisode)
         })}
-        ${Boolean(model.player.streamAutoPlayPreferBingeGroupForNextEpisode) ? this.renderToggleRow({
-          focusKey: "playback:reuseBingeGroup",
-          title: t("autoplay_reuse_binge_group", {}, "Reuse Binge Group"),
-          subtitle: t("autoplay_reuse_binge_group_sub", {}, "Remember and reuse the last binge group across sessions."),
-          checked: Boolean(model.player.streamAutoPlayReuseBingeGroup)
-        }) : ""}
+        ${
+          model.player.streamAutoPlayPreferBingeGroupForNextEpisode
+            ? this.renderToggleRow({
+                focusKey: "playback:reuseBingeGroup",
+                title: t("autoplay_reuse_binge_group", {}, "Reuse Binge Group"),
+                subtitle: t(
+                  "autoplay_reuse_binge_group_sub",
+                  {},
+                  "Remember and reuse the last binge group across sessions."
+                ),
+                checked: Boolean(model.player.streamAutoPlayReuseBingeGroup)
+              })
+            : ""
+        }
         ${this.renderToggleRow({
           focusKey: "playback:skipIntro",
           title: t("settings.playback.skipIntro.title", {}, "Skip Intro"),
@@ -5315,97 +6376,228 @@ export const SettingsScreen = {
           ),
           checked: Boolean(model.player.skipIntroEnabled)
         })}
+        ${this.renderToggleRow({ focusKey: "playback:loadingOverlay", title: t("playback_loading_overlay"), subtitle: t("playback_loading_overlay_sub"), checked: model.player.loadingOverlayEnabled !== false })}
+        ${this.renderToggleRow({ focusKey: "playback:loadingStatus", title: t("playback_show_loading_status", {}, "Detailed loading status"), subtitle: t("playback_show_loading_status_sub", {}, "Show detailed player loading progress"), checked: model.player.showPlayerLoadingStatus !== false })}
+        ${Platform.isWebOS() ? this.renderToggleRow({ focusKey: "playback:minimalBufferingUi", title: t("playback_minimal_buffering_ui", {}, "Minimal buffering UI"), subtitle: t("playback_minimal_buffering_ui_sub", {}, "Show only the spinner when playback buffers after it has started"), checked: Boolean(model.player.minimalBufferingUiEnabled) }) : ""}
+        ${this.renderToggleRow({ focusKey: "playback:pauseOverlay", title: t("playback_pause_overlay"), subtitle: t("playback_pause_overlay_sub"), checked: model.player.pauseOverlayEnabled !== false })}
+        ${this.renderToggleRow({ focusKey: "playback:parentalGuide", title: t("playback_parental_guide"), subtitle: t("playback_parental_guide_sub"), checked: model.player.parentalGuideEnabled !== false })}
+        ${["intro", "recap", "outro"].map((type) => this.renderToggleRow({ focusKey: `playback:autoSkip:${type}`, title: t(`auto_skip_${type}`, {}, `Auto-skip ${type}`), subtitle: t(`auto_skip_${type}_sub`, {}, `Skip ${type} segments automatically`), checked: model.player.autoSkipSegmentTypes?.includes(type) })).join("")}
+        ${this.renderToggleRow({
+          focusKey: "playback:osdClock",
+          title: t("playback_osd_clock", {}, "OSD Clock"),
+          subtitle: t(
+            "playback_show_clock_sub",
+            {},
+            "Show current time and end time while controls are visible."
+          ),
+          checked: Boolean(model.player.osdClockEnabled)
+        })}
         ${this.renderActionRow({
           focusKey: "playback:nextEpisodeThresholdMode",
-          title: t("settings.playback.nextEpisodeThresholdMode.title", {}, "Next episode threshold"),
-          subtitle: t("settings.playback.nextEpisodeThresholdMode.subtitle", {}, "Choose percentage or minutes before the end."),
-          value: String(model.player.nextEpisodeThresholdMode || "PERCENTAGE").toUpperCase() === "MINUTES_BEFORE_END"
-            ? t("settings.playback.nextEpisodeThresholdMode.minutes", {}, "Minutes before end")
-            : t("settings.playback.nextEpisodeThresholdMode.percentage", {}, "Percentage")
+          title: t(
+            "settings.playback.nextEpisodeThresholdMode.title",
+            {},
+            "Next episode threshold"
+          ),
+          subtitle: t(
+            "settings.playback.nextEpisodeThresholdMode.subtitle",
+            {},
+            "Choose percentage or minutes before the end."
+          ),
+          value:
+            String(model.player.nextEpisodeThresholdMode || "PERCENTAGE").toUpperCase() ===
+            "MINUTES_BEFORE_END"
+              ? t("settings.playback.nextEpisodeThresholdMode.minutes", {}, "Minutes before end")
+              : t("settings.playback.nextEpisodeThresholdMode.percentage", {}, "Percentage")
         })}
         ${this.renderActionRow({
           focusKey: "playback:nextEpisodeThresholdValue",
-          title: String(model.player.nextEpisodeThresholdMode || "PERCENTAGE").toUpperCase() === "MINUTES_BEFORE_END"
-            ? t("settings.playback.nextEpisodeThresholdMinutes.title", {}, "Next episode minutes before end")
-            : t("settings.playback.nextEpisodeThresholdPercent.title", {}, "Next episode percentage"),
-          subtitle: String(model.player.nextEpisodeThresholdMode || "PERCENTAGE").toUpperCase() === "MINUTES_BEFORE_END"
-            ? t("settings.playback.nextEpisodeThresholdMinutes.subtitle", {}, "Start the next episode this many minutes before the end.")
-            : t("settings.playback.nextEpisodeThresholdPercent.subtitle", {}, "Start the next episode at this percentage."),
-          value: String(model.player.nextEpisodeThresholdMode || "PERCENTAGE").toUpperCase() === "MINUTES_BEFORE_END"
-            ? formatHalfStepSettingValue(model.player.nextEpisodeThresholdMinutesBeforeEnd ?? 2, " min")
-            : `${formatHalfStepSettingValue(model.player.nextEpisodeThresholdPercent ?? 99, "")}%`
+          title:
+            String(model.player.nextEpisodeThresholdMode || "PERCENTAGE").toUpperCase() ===
+            "MINUTES_BEFORE_END"
+              ? t(
+                  "settings.playback.nextEpisodeThresholdMinutes.title",
+                  {},
+                  "Next episode minutes before end"
+                )
+              : t(
+                  "settings.playback.nextEpisodeThresholdPercent.title",
+                  {},
+                  "Next episode percentage"
+                ),
+          subtitle:
+            String(model.player.nextEpisodeThresholdMode || "PERCENTAGE").toUpperCase() ===
+            "MINUTES_BEFORE_END"
+              ? t(
+                  "settings.playback.nextEpisodeThresholdMinutes.subtitle",
+                  {},
+                  "Start the next episode this many minutes before the end."
+                )
+              : t(
+                  "settings.playback.nextEpisodeThresholdPercent.subtitle",
+                  {},
+                  "Start the next episode at this percentage."
+                ),
+          value:
+            String(model.player.nextEpisodeThresholdMode || "PERCENTAGE").toUpperCase() ===
+            "MINUTES_BEFORE_END"
+              ? formatHalfStepSettingValue(
+                  model.player.nextEpisodeThresholdMinutesBeforeEnd ?? 2,
+                  " min"
+                )
+              : `${formatHalfStepSettingValue(model.player.nextEpisodeThresholdPercent ?? 99, "")}%`
         })}
-        ${Boolean(model.player.autoplayNextEpisode) ? `
+        ${
+          model.player.autoplayNextEpisode
+            ? `
         ${this.renderToggleRow({
           focusKey: "playback:stillWatching",
           title: t("settings.playback.stillWatching.title", {}, "Still watching"),
-          subtitle: t("settings.playback.stillWatching.subtitle", {}, "Show a prompt after repeated autoplay episodes."),
+          subtitle: t(
+            "settings.playback.stillWatching.subtitle",
+            {},
+            "Show a prompt after repeated autoplay episodes."
+          ),
           checked: Boolean(model.player.stillWatchingEnabled)
         })}
-        ${Boolean(model.player.stillWatchingEnabled) ? this.renderActionRow({
-          focusKey: "playback:stillWatchingThreshold",
-          title: t("settings.playback.stillWatchingThreshold.title", {}, "Still watching threshold"),
-          subtitle: t("settings.playback.stillWatchingThreshold.subtitle", {}, "How many autoplayed episodes before prompting."),
-          value: String(model.player.stillWatchingEpisodeThreshold ?? 3)
-        }) : ""}
-        ` : ""}
+        ${
+          model.player.stillWatchingEnabled
+            ? this.renderActionRow({
+                focusKey: "playback:stillWatchingThreshold",
+                title: t(
+                  "settings.playback.stillWatchingThreshold.title",
+                  {},
+                  "Still watching threshold"
+                ),
+                subtitle: t(
+                  "settings.playback.stillWatchingThreshold.subtitle",
+                  {},
+                  "How many autoplayed episodes before prompting."
+                ),
+                value: String(model.player.stillWatchingEpisodeThreshold ?? 3)
+              })
+            : ""
+        }
+        `
+            : ""
+        }
         ${this.renderToggleRow({
           focusKey: "playback:reuseLastLink",
           title: t("autoplay_reuse_last_link", {}, "Reuse Last Link"),
-          subtitle: t("autoplay_reuse_last_link_sub", {}, "Auto-play your last working stream for this same movie or episode while the cache is valid."),
+          subtitle: t(
+            "autoplay_reuse_last_link_sub",
+            {},
+            "Auto-play your last working stream for this same movie or episode while the cache is valid."
+          ),
           checked: Boolean(model.player.streamReuseLastLinkEnabled)
         })}
-        ${Boolean(model.player.streamReuseLastLinkEnabled) ? this.renderActionRow({
-          focusKey: "playback:reuseLastLinkCache",
-          title: t("autoplay_last_link_cache", {}, "Last Link Cache Duration"),
-          subtitle: t("autoplay_reuse_last_link_sub", {}, "Auto-play your last working stream while the cache is valid."),
-          value: formatReuseCacheDuration(model.player.streamReuseLastLinkCacheHours)
-        }) : ""}
+        ${
+          model.player.streamReuseLastLinkEnabled
+            ? this.renderActionRow({
+                focusKey: "playback:reuseLastLinkCache",
+                title: t("autoplay_last_link_cache", {}, "Last Link Cache Duration"),
+                subtitle: t(
+                  "autoplay_reuse_last_link_sub",
+                  {},
+                  "Auto-play your last working stream while the cache is valid."
+                ),
+                value: formatReuseCacheDuration(model.player.streamReuseLastLinkCacheHours)
+              })
+            : ""
+        }
         ${this.renderActionRow({
           focusKey: "playback:autoStreamMode",
           title: t("autoplay_stream_selection", {}, "Auto Stream Selection"),
           subtitle: translateOptionCaption(
-            STREAM_AUTOPLAY_MODE_OPTIONS.find((option) => String(option.id) === String(model.player.streamAutoPlayMode)),
+            STREAM_AUTOPLAY_MODE_OPTIONS.find(
+              (option) => String(option.id) === String(model.player.streamAutoPlayMode)
+            ),
             t("autoplay_mode_manual_desc", {}, "Always show the source list and let me choose.")
           ),
-          value: labelForOptionId(STREAM_AUTOPLAY_MODE_OPTIONS, model.player.streamAutoPlayMode, "Manual (choose stream)")
+          value: labelForOptionId(
+            STREAM_AUTOPLAY_MODE_OPTIONS,
+            model.player.streamAutoPlayMode,
+            "Manual (choose stream)"
+          )
         })}
         ${this.renderActionRow({
           focusKey: "playback:autoStreamTimeout",
           title: t("autoplay_timeout_title", {}, "Stream Selection Timeout"),
           subtitle: t("autoplay_timeout_sub", {}, "Wait time for addons before selecting."),
-          value: labelForOptionId(STREAM_AUTOPLAY_TIMEOUT_OPTIONS, model.player.streamAutoPlayTimeoutSeconds, `${model.player.streamAutoPlayTimeoutSeconds}s`)
+          value: labelForOptionId(
+            STREAM_AUTOPLAY_TIMEOUT_OPTIONS,
+            model.player.streamAutoPlayTimeoutSeconds,
+            `${model.player.streamAutoPlayTimeoutSeconds}s`
+          )
         })}
-        ${String(model.player.streamAutoPlayMode || "MANUAL") !== "MANUAL" ? `
+        ${
+          String(model.player.streamAutoPlayMode || "MANUAL") !== "MANUAL"
+            ? `
         ${this.renderActionRow({
           focusKey: "playback:autoStreamSource",
           title: t("autoplay_scope", {}, "Auto-play Source Scope"),
-          subtitle: labelForOptionId(STREAM_AUTOPLAY_SOURCE_OPTIONS, model.player.streamAutoPlaySource, "All sources"),
-          value: labelForOptionId(STREAM_AUTOPLAY_SOURCE_OPTIONS, model.player.streamAutoPlaySource, "All sources")
+          subtitle: labelForOptionId(
+            STREAM_AUTOPLAY_SOURCE_OPTIONS,
+            model.player.streamAutoPlaySource,
+            "All sources"
+          ),
+          value: labelForOptionId(
+            STREAM_AUTOPLAY_SOURCE_OPTIONS,
+            model.player.streamAutoPlaySource,
+            "All sources"
+          )
         })}
-        ${String(model.player.streamAutoPlaySource || "ALL_SOURCES") !== "ENABLED_PLUGINS_ONLY" ? this.renderActionRow({
-          focusKey: "playback:autoStreamAddons",
-          title: t("autoplay_allowed_addons", {}, "Allowed Addons"),
-          subtitle: t("autoplay_scope_addons_desc", {}, "Auto-play only considers selected installed addons."),
-          value: model.player.streamAutoPlaySelectedAddons?.length
-            ? String(model.player.streamAutoPlaySelectedAddons.length)
-            : t("autoplay_all_addons", {}, "All installed addons")
-        }) : ""}
-        ${String(model.player.streamAutoPlaySource || "ALL_SOURCES") !== "INSTALLED_ADDONS_ONLY" ? this.renderActionRow({
-          focusKey: "playback:autoStreamPlugins",
-          title: t("autoplay_allowed_plugins", {}, "Allowed Plugins"),
-          subtitle: t("autoplay_scope_plugins_desc", {}, "Auto-play only considers selected enabled plugins."),
-          value: model.player.streamAutoPlaySelectedPlugins?.length
-            ? String(model.player.streamAutoPlaySelectedPlugins.length)
-            : t("autoplay_all_plugins", {}, "All enabled plugins")
-        }) : ""}` : ""}
-        ${String(model.player.streamAutoPlayMode || "MANUAL") === "REGEX_MATCH" ? `
+        ${
+          String(model.player.streamAutoPlaySource || "ALL_SOURCES") !== "ENABLED_PLUGINS_ONLY"
+            ? this.renderActionRow({
+                focusKey: "playback:autoStreamAddons",
+                title: t("autoplay_allowed_addons", {}, "Allowed Addons"),
+                subtitle: t(
+                  "autoplay_scope_addons_desc",
+                  {},
+                  "Auto-play only considers selected installed addons."
+                ),
+                value: model.player.streamAutoPlaySelectedAddons?.length
+                  ? String(model.player.streamAutoPlaySelectedAddons.length)
+                  : t("autoplay_all_addons", {}, "All installed addons")
+              })
+            : ""
+        }
+        ${
+          String(model.player.streamAutoPlaySource || "ALL_SOURCES") !== "INSTALLED_ADDONS_ONLY"
+            ? this.renderActionRow({
+                focusKey: "playback:autoStreamPlugins",
+                title: t("autoplay_allowed_plugins", {}, "Allowed Plugins"),
+                subtitle: t(
+                  "autoplay_scope_plugins_desc",
+                  {},
+                  "Auto-play only considers selected enabled plugins."
+                ),
+                value: model.player.streamAutoPlaySelectedPlugins?.length
+                  ? String(model.player.streamAutoPlaySelectedPlugins.length)
+                  : t("autoplay_all_plugins", {}, "All enabled plugins")
+              })
+            : ""
+        }`
+            : ""
+        }
+        ${
+          String(model.player.streamAutoPlayMode || "MANUAL") === "REGEX_MATCH"
+            ? `
         ${this.renderActionRow({
           focusKey: "playback:autoStreamRegex",
           title: t("autoplay_regex_title", {}, "Regex Pattern"),
-          subtitle: t("autoplay_regex_matches", {}, "Matches stream name, title, description, addon and URL."),
-          value: String(model.player.streamAutoPlayRegex || "").trim() || t("common.notSet", {}, "Not set")
-        })}` : ""}
+          subtitle: t(
+            "autoplay_regex_matches",
+            {},
+            "Matches stream name, title, description, addon and URL."
+          ),
+          value:
+            String(model.player.streamAutoPlayRegex || "").trim() ||
+            t("common.notSet", {}, "Not set")
+        })}`
+            : ""
+        }
       </div>
     `;
 
@@ -5417,11 +6609,22 @@ export const SettingsScreen = {
           subtitle: t("settings.playback.autoplayTrailer.subtitle"),
           checked: Boolean(model.player.trailerAutoplay)
         })}
+        ${model.player.trailerAutoplay ? this.renderActionRow({ focusKey: "playback:trailerDelay", title: t("audio_trailer_delay"), subtitle: t("audio_trailer_delay_sub", {}, "Delay before trailer playback starts"), value: `${model.player.trailerDelaySeconds ?? 7}s` }) : ""}
         ${this.renderActionRow({
           focusKey: "playback:audioLanguage",
           title: t("settings.playback.preferredAudio.title"),
           subtitle: t("settings.playback.preferredAudio.subtitle"),
           value: labelForPlaybackLanguage(model.player.preferredAudioLanguage)
+        })}
+        ${this.renderActionRow({
+          focusKey: "playback:secondaryAudioLanguage",
+          title: t("sub_secondary_lang", {}, "Secondary Preferred Language"),
+          subtitle: t(
+            "settings.playback.preferredAudio.subtitle",
+            {},
+            "Choose the audio language to prefer when it is available."
+          ),
+          value: labelForPlaybackLanguage(model.player.secondaryPreferredAudioLanguage)
         })}
       </div>
     `;
@@ -5453,17 +6656,22 @@ export const SettingsScreen = {
 
     const subtitleBody = `
       <div class="settings-stack">
-        ${this.renderToggleRow({
-          focusKey: "playback:subtitlesEnabled",
-          title: t("settings.playback.enableSubtitles.title"),
-          subtitle: t("settings.playback.enableSubtitles.subtitle"),
-          checked: Boolean(model.player.subtitlesEnabled)
-        })}
         ${this.renderActionRow({
           focusKey: "playback:subtitleLanguage",
           title: t("settings.playback.subtitleLanguage.title"),
           subtitle: t("settings.playback.subtitleLanguage.subtitle"),
           value: labelForSubtitlePlaybackLanguage(model.player.subtitleLanguage)
+        })}
+        ${this.renderActionRow({ focusKey: "playback:secondarySubtitleLanguage", title: t("sub_secondary_lang", {}, "Secondary subtitle language"), subtitle: t("sub_secondary_lang_sub", {}, "Fallback language when the preferred language is unavailable"), value: labelForSubtitlePlaybackLanguage(model.player.secondarySubtitleLanguage) })}
+        ${this.renderToggleRow({
+          focusKey: "playback:useForcedSubtitles",
+          title: t("settings.playback.useForcedSubtitles.title", {}, "Use forced subtitles"),
+          subtitle: t(
+            "settings.playback.useForcedSubtitles.subtitle",
+            {},
+            "Prefer forced subtitles when the audio matches the selected subtitle language."
+          ),
+          checked: Boolean(model.player.subtitleStyle?.useForcedSubtitles)
         })}
         ${this.renderToggleRow({
           focusKey: "playback:showOnlyPreferredSubtitleLanguages",
@@ -5475,20 +6683,15 @@ export const SettingsScreen = {
           ),
           checked: Boolean(model.player.subtitleStyle?.showOnlyPreferredLanguages)
         })}
-        ${this.renderToggleRow({
-          focusKey: "playback:useForcedSubtitles",
-          title: t("settings.playback.useForcedSubtitles.title", {}, "Use forced subtitles"),
-          subtitle: t(
-            "settings.playback.useForcedSubtitles.subtitle",
-            {},
-            "Prefer forced subtitles when the audio matches the selected subtitle language."
-          ),
-          checked: Boolean(model.player.subtitleStyle?.useForcedSubtitles)
-        })}
+        ${this.renderActionRow({ focusKey: "playback:subtitleStartupMode", title: t("sub_startup_mode_title", {}, "Subtitle startup mode"), subtitle: t("sub_startup_mode_all_desc", {}, "Choose how addon subtitles are loaded at startup"), value: t(model.player.addonSubtitleStartupMode === "FAST_STARTUP" ? "sub_startup_mode_fast" : model.player.addonSubtitleStartupMode === "PREFERRED_ONLY" ? "sub_startup_mode_preferred" : "sub_startup_mode_all") })}
         ${this.renderActionRow({
           focusKey: "playback:subtitleSize",
           title: t("settings.playback.subtitleSize.title", {}, "Subtitle size"),
-          subtitle: t("settings.playback.subtitleSize.subtitle", {}, "Text size used for subtitles during playback."),
+          subtitle: t(
+            "settings.playback.subtitleSize.subtitle",
+            {},
+            "Text size used for subtitles during playback."
+          ),
           value: labelForOptionId(
             SUBTITLE_SIZE_OPTIONS,
             clampSubtitleSize(model.player.subtitleStyle?.fontSize ?? 120),
@@ -5498,12 +6701,15 @@ export const SettingsScreen = {
         ${this.renderActionRow({
           focusKey: "playback:subtitleOffset",
           title: t("settings.playback.subtitleOffset.title", {}, "Subtitle position"),
-          subtitle: t("settings.playback.subtitleOffset.subtitle", {}, "Move subtitles up or down on the screen."),
+          subtitle: t(
+            "settings.playback.subtitleOffset.subtitle",
+            {},
+            "Move subtitles up or down on the screen."
+          ),
           value: labelForOptionId(
             SUBTITLE_OFFSET_OPTIONS,
             clampSubtitleOffset(
-              model.player.subtitleStyle?.verticalOffset
-                ?? SUBTITLE_VERTICAL_OFFSET_DEFAULT
+              model.player.subtitleStyle?.verticalOffset ?? SUBTITLE_VERTICAL_OFFSET_DEFAULT
             ),
             `${SUBTITLE_VERTICAL_OFFSET_DEFAULT}%`
           )
@@ -5517,29 +6723,56 @@ export const SettingsScreen = {
         ${this.renderActionRow({
           focusKey: "playback:subtitleTextColor",
           title: t("settings.playback.subtitleTextColor.title", {}, "Subtitle color"),
-          subtitle: t("settings.playback.subtitleTextColor.subtitle", {}, "Color of the subtitle text."),
+          subtitle: t(
+            "settings.playback.subtitleTextColor.subtitle",
+            {},
+            "Color of the subtitle text."
+          ),
           value: labelForOptionId(
             SUBTITLE_TEXT_COLOR_OPTIONS,
             normalizeSubtitleStyleHex(model.player.subtitleStyle?.textColor, "#FFFFFF"),
             normalizeSubtitleStyleHex(model.player.subtitleStyle?.textColor, "#FFFFFF")
           )
         })}
+        ${this.renderActionRow({
+          focusKey: "playback:subtitleTextOpacity",
+          title: t("subtitle_style_text_opacity", {}, "Text Opacity"),
+          subtitle: "Opacity applied to subtitle text independently of its color and background.",
+          value: labelForOptionId(
+            SUBTITLE_TEXT_OPACITY_OPTIONS,
+            clampSubtitleTextOpacity(model.player.subtitleStyle?.textOpacity),
+            `${clampSubtitleTextOpacity(model.player.subtitleStyle?.textOpacity)}%`
+          )
+        })}
+        ${this.renderActionRow({ focusKey: "playback:subtitleBackgroundColor", title: t("sub_bg_color", {}, "Subtitle background color"), subtitle: t("sub_bg_color", {}, "Background behind subtitle text"), value: String(model.player.subtitleStyle?.backgroundColor || "#00000000") })}
         ${this.renderToggleRow({
           focusKey: "playback:subtitleOutline",
           title: t("settings.playback.subtitleOutline.title", {}, "Subtitle outline"),
-          subtitle: t("settings.playback.subtitleOutline.subtitle", {}, "Draw an outline around subtitle text for readability."),
+          subtitle: t(
+            "settings.playback.subtitleOutline.subtitle",
+            {},
+            "Draw an outline around subtitle text for readability."
+          ),
           checked: Boolean(model.player.subtitleStyle?.outlineEnabled)
         })}
-        ${model.player.subtitleStyle?.outlineEnabled ? this.renderActionRow({
-          focusKey: "playback:subtitleOutlineColor",
-          title: t("settings.playback.subtitleOutlineColor.title", {}, "Outline color"),
-          subtitle: t("settings.playback.subtitleOutlineColor.subtitle", {}, "Color of the subtitle outline."),
-          value: labelForOptionId(
-            SUBTITLE_OUTLINE_COLOR_OPTIONS,
-            normalizeSubtitleStyleHex(model.player.subtitleStyle?.outlineColor, "#000000"),
-            normalizeSubtitleStyleHex(model.player.subtitleStyle?.outlineColor, "#000000")
-          )
-        }) : ""}
+        ${
+          model.player.subtitleStyle?.outlineEnabled
+            ? this.renderActionRow({
+                focusKey: "playback:subtitleOutlineColor",
+                title: t("settings.playback.subtitleOutlineColor.title", {}, "Outline color"),
+                subtitle: t(
+                  "settings.playback.subtitleOutlineColor.subtitle",
+                  {},
+                  "Color of the subtitle outline."
+                ),
+                value: labelForOptionId(
+                  SUBTITLE_OUTLINE_COLOR_OPTIONS,
+                  normalizeSubtitleStyleHex(model.player.subtitleStyle?.outlineColor, "#000000"),
+                  normalizeSubtitleStyleHex(model.player.subtitleStyle?.outlineColor, "#000000")
+                )
+              })
+            : ""
+        }
         ${this.renderActionRow({
           focusKey: "playback:renderMode",
           title: t("settings.playback.renderMode.title"),
@@ -5554,14 +6787,18 @@ export const SettingsScreen = {
         ${this.renderToggleRow({
           focusKey: "playback:p2pEnabled",
           title: t("settings_p2p_title"),
-          subtitle: t("settings_p2p_subtitle"),
-          checked: Boolean(torrentSettings.p2pEnabled)
+          subtitle: p2pUnavailableSubtitle,
+          checked: tizenP2pUnsupported ? false : Boolean(torrentSettings.p2pEnabled),
+          disabled: tizenP2pUnsupported
         })}
         ${this.renderToggleRow({
           focusKey: "playback:hideTorrentStats",
           title: t("settings_p2p_hide_stats_title"),
-          subtitle: t("settings_p2p_hide_stats_subtitle"),
-          checked: Boolean(torrentSettings.hideTorrentStats)
+          subtitle: tizenP2pUnsupported
+            ? p2pUnavailableSubtitle
+            : t("settings_p2p_hide_stats_subtitle"),
+          checked: tizenP2pUnsupported ? false : Boolean(torrentSettings.hideTorrentStats),
+          disabled: tizenP2pUnsupported
         })}
       </div>
     `;
@@ -5584,21 +6821,25 @@ export const SettingsScreen = {
             expanded: Boolean(expanded.audio),
             bodyHtml: audioBody
           })}
-          ${Platform.isWebOS() ? this.renderCollapsibleRow({
-            focusKey: "playback:toggle:audioCompatibility",
-            title: t(
-              "settings.playback.groups.audioCompatibility.title",
-              {},
-              "Advanced audio compatibility"
-            ),
-            subtitle: t(
-              "settings.playback.groups.audioCompatibility.subtitle",
-              {},
-              "Automatic detection is used first. Override only when a rooted TV has a working decoder."
-            ),
-            expanded: Boolean(expanded.audioCompatibility),
-            bodyHtml: audioCompatibilityBody
-          }) : ""}
+          ${
+            Platform.isWebOS()
+              ? this.renderCollapsibleRow({
+                  focusKey: "playback:toggle:audioCompatibility",
+                  title: t(
+                    "settings.playback.groups.audioCompatibility.title",
+                    {},
+                    "Advanced audio compatibility"
+                  ),
+                  subtitle: t(
+                    "settings.playback.groups.audioCompatibility.subtitle",
+                    {},
+                    "Automatic detection is used first. Override only when a rooted TV has a working decoder."
+                  ),
+                  expanded: Boolean(expanded.audioCompatibility),
+                  bodyHtml: audioCompatibilityBody
+                })
+              : ""
+          }
           ${this.renderCollapsibleRow({
             focusKey: "playback:toggle:subtitles",
             title: t("settings.playback.groups.subtitles.title"),
@@ -5877,13 +7118,6 @@ export const SettingsScreen = {
         }
       });
     });
-    this.actionMap.set("trakt:toggleScrobbling", () => {
-      const current = TraktSettingsStore.get().enableScrobbling;
-      TraktSettingsStore.setEnableScrobbling(!current);
-      this.traktStatusMessage = !current
-        ? t("trakt_scrobbling_enabled", {}, "Scrobbling to Trakt is now enabled")
-        : t("trakt_scrobbling_disabled", {}, "Scrobbling to Trakt is now disabled");
-    });
 
     return `
       <div class="settings-slide-panel settings-trakt-panel">
@@ -6023,12 +7257,6 @@ export const SettingsScreen = {
           subtitle: t("trakt_comments_subtitle", {}, "Show Trakt reviews on metadata pages"),
           value: labelForTraktComments(settings.showMetaComments)
         })}
-        ${this.renderToggleRow({
-          focusKey: "trakt:toggleScrobbling",
-          title: t("trakt_scrobbling_title", {}, "Scrobbling"),
-          subtitle: t("trakt_scrobbling_subtitle", {}, "Automatically scrobble playback to Trakt"),
-          checked: Boolean(settings.enableScrobbling)
-        })}
       </div>
     `;
   },
@@ -6041,31 +7269,65 @@ export const SettingsScreen = {
         <div class="settings-stack">
           ${this.renderActionRow({
             focusKey: "trakt:open",
-            title: t("settings.trakt.openSettings", {}, "Trakt"),
-            subtitle: t("settings.trakt.openSettingsSubtitle", {}, "Open Trakt connection screen.")
+            title: t("settings.tracking.openSettings", {}, "Tracking"),
+            subtitle: t(
+              "settings.tracking.openSettingsSubtitle",
+              {},
+              "Connect Trakt or Simkl and choose library and progress sources."
+            )
           })}
         </div>
       </div>
     `;
   },
 
-  renderAboutSection() {
+  renderAboutSection(model = this.model) {
     this.actionMap.set("about:privacy", () => {
       window.open?.(PRIVACY_URL, "_blank");
     });
     this.actionMap.set("about:supporters", () => Router.navigate("supportersContributors"));
+    this.actionMap.set("about:licenses", () => Router.navigate("licensesAttributions"));
+    this.actionMap.set("about:checkUpdates", async () => {
+      this.aboutUpdateStatus = t("update_checking", {}, "Checking for updates…");
+      await this.render({ refreshModel: false });
+      try {
+        const update = await getLatestAppUpdate({ currentVersion: CURRENT_APP_VERSION });
+        this.aboutUpdateStatus = update
+          ? String(update.tag || "")
+          : t("update_latest_version", {}, "You’re using the latest version.");
+        if (update) showAppUpdatePrompt(update);
+      } catch (_) {
+        this.aboutUpdateStatus = t("update_error_check_failed", {}, "Update check failed");
+      }
+      await this.render({ refreshModel: false });
+    });
     this.actionMap.set("about:debugConsole", () => Router.navigate("debugConsole"));
 
     return `
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "about"))}
       <div class="settings-group-card settings-group-card-fill">
         <div class="settings-about-brand">
-          <img class="settings-about-logo" src="assets/brand/app_logo_wordmark.png" alt="Nuvio" />
+          ${renderMemberBrandWordmark({
+            access: model?.memberAccess,
+            imageClass: "settings-about-logo",
+            wrapperClass: "settings-about-wordmark"
+          })}
           <p class="settings-about-copy">${t("settings.about.madeWithLove")}</p>
           <p class="settings-about-copy">${t("settings.about.version", { version: SETTINGS_VERSION_LABEL })}</p>
           <p class="settings-about-copy">${t("settings.about.portedBy")}</p>
         </div>
         <div class="settings-stack">
+          ${this.renderActionRow({
+            focusKey: "about:checkUpdates",
+            title: t("about_check_updates", {}, "Check for updates"),
+            subtitle:
+              this.aboutUpdateStatus ||
+              t(
+                "about_check_updates_subtitle",
+                {},
+                "Check the latest release for manual installation"
+              )
+          })}
           ${this.renderActionRow({
             focusKey: "about:privacy",
             title: t("settings.about.privacyPolicy.title"),
@@ -6078,13 +7340,14 @@ export const SettingsScreen = {
             subtitle: t("settings.about.supporters.subtitle")
           })}
           ${this.renderActionRow({
+            focusKey: "about:licenses",
+            title: t("about_licenses_attributions", {}, "Licenses & Attribution"),
+            subtitle: t("licenses_attributions_section_data", {}, "Data & services")
+          })}
+          ${this.renderActionRow({
             focusKey: "about:debugConsole",
             title: t("about_debug_console_title", {}, "Console debug"),
-            subtitle: t(
-              "about_debug_console_subtitle",
-              {},
-              "Show latest error/warning events"
-            ),
+            subtitle: t("about_debug_console_subtitle", {}, "Show latest error/warning events"),
             leadingIcon: "terminal"
           })}
         </div>
@@ -6098,7 +7361,7 @@ export const SettingsScreen = {
     if (section.id === "appearance") return this.renderAppearanceSection(model);
     if (section.id === "layout") return this.renderLayoutSection(model);
     if (section.id === "contentDiscovery") return this.renderContentDiscoverySection();
-    if (section.id === "plugins") return this.renderPluginsSection();
+    if (section.id === "plugins") return this.renderPluginsSection(model);
     if (section.id === "integration") return this.renderIntegrationSection(model);
     if (section.id === "streams") return this.renderStreamsSection(model);
     if (section.id === "playback") return this.renderPlaybackSection(model);
@@ -6120,7 +7383,7 @@ export const SettingsScreen = {
         SECTION_META.find((item) => item.id === "appearance") || SECTION_META[0]
       ];
     }
-    if (!canOpenSettingsSection(this.activeSection)) {
+    if (!this.visibleSections.some((section) => section.id === this.activeSection)) {
       this.setActiveSection(this.visibleSections[0]?.id || "appearance");
     }
     this.navIndex = clamp(
@@ -6141,6 +7404,9 @@ export const SettingsScreen = {
 
     const shell = this.container.querySelector(".settings-shell");
     if (shell) {
+      shell.dataset.settingsStyle = String(
+        this.model.theme.settingsUiStyle || "CLASSIC"
+      ).toLowerCase();
       shell.classList.toggle("settings-route-enter", Boolean(this.settingsRouteEnterPending));
       if (this.settingsRouteEnterPending) {
         void shell.offsetWidth;
@@ -6214,6 +7480,9 @@ export const SettingsScreen = {
     const dialogHtml = this.optionDialog ? this.renderOptionDialog() : this.renderTextDialog();
     if (dialogSlot && dialogSlot.innerHTML !== dialogHtml) {
       dialogSlot.innerHTML = dialogHtml;
+    }
+    if (dialogSlot && typeof this.optionDialog?.onRender === "function") {
+      this.optionDialog.onRender(dialogSlot);
     }
     this.bindTextDialogEvents();
 
@@ -6613,7 +7882,11 @@ export const SettingsScreen = {
         return;
       }
       if (typeof this.optionDialog.onSelect === "function") {
-        await this.optionDialog.onSelect(option);
+        const shouldClose = await this.optionDialog.onSelect(option);
+        if (shouldClose === false) {
+          await this.render({ refreshModel: false });
+          return;
+        }
       }
       this.closeOptionDialog();
       await this.render();
@@ -6790,6 +8063,31 @@ export const SettingsScreen = {
       }
 
       if (this.focusZone === "nav") {
+        const horizonStyle = String(this.model?.theme?.settingsUiStyle || "CLASSIC") === "HORIZON";
+        if (horizonStyle && code === 37) {
+          this.moveNavFocus(this.navIndex - 1);
+          return;
+        }
+        if (horizonStyle && code === 39) {
+          this.moveNavFocus(this.navIndex + 1);
+          return;
+        }
+        if (horizonStyle && code === 40) {
+          const firstContent = this.container.querySelector(".settings-content-focusable");
+          if (firstContent) {
+            this.focusZone = "content";
+            this.contentFocusKey = String(firstContent.dataset.focusKey || "");
+            this.applyFocus();
+          }
+          return;
+        }
+        if (horizonStyle && code === 38) {
+          const sidebarNodes = getRootSidebarNodes(this.container, this.layoutPrefs);
+          const selectedSidebarNode = getRootSidebarSelectedNode(this.container, this.layoutPrefs);
+          this.sidebarFocusIndex = Math.max(0, sidebarNodes.indexOf(selectedSidebarNode));
+          await this.openSidebar();
+          return;
+        }
         if (code === 38) {
           this.moveNavFocus(this.navIndex - 1);
           return;
@@ -6817,6 +8115,14 @@ export const SettingsScreen = {
       }
 
       if (this.focusZone === "content") {
+        if (code === 38 && String(this.model?.theme?.settingsUiStyle || "CLASSIC") === "HORIZON") {
+          if (!this.moveContent("up")) {
+            this.syncNavFocusToActive();
+            this.focusZone = "nav";
+            this.applyFocus();
+          }
+          return;
+        }
         if (code === 37) {
           const moved = this.moveContent("left");
           if (!moved) {
@@ -6869,8 +8175,12 @@ export const SettingsScreen = {
   },
 
   cleanup() {
+    this.isMounted = false;
+    this.memberAccessUnsubscribe?.();
+    this.memberAccessUnsubscribe = null;
     this.persistUiState();
     this.stopTraktPolling?.();
+    this.stopDebridDeviceAuth();
     if (this.container && this.handleWheelBound) {
       this.container.removeEventListener("wheel", this.handleWheelBound);
     }

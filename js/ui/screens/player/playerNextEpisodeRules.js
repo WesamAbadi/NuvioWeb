@@ -1,8 +1,46 @@
 const VALID_NEXT_EPISODE_THRESHOLD_MODES = new Set(["PERCENTAGE", "MINUTES_BEFORE_END"]);
 const OUTRO_SEGMENT_TYPES = new Set(["outro", "ed", "mixed-ed"]);
+const ISO_DATE_PATTERN = /\b\d{4}-\d{2}-\d{2}\b/;
+
+function parseEpisodeReleaseInstant(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return null;
+  }
+
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+  const parsed = Date.parse(dateOnly ? `${raw}T00:00:00.000Z` : raw);
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+
+  const embeddedDate = raw.match(ISO_DATE_PATTERN)?.[0] || "";
+  if (!embeddedDate) {
+    return null;
+  }
+  const embeddedParsed = Date.parse(`${embeddedDate}T00:00:00.000Z`);
+  return Number.isFinite(embeddedParsed) ? embeddedParsed : null;
+}
+
+function hasEpisodeAired(value, now = Date.now()) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return true;
+  }
+
+  const releaseTime = parseEpisodeReleaseInstant(raw);
+  if (!Number.isFinite(releaseTime)) {
+    return true;
+  }
+
+  const nowTime = Number(now);
+  return Number.isFinite(nowTime) ? releaseTime <= nowTime : true;
+}
 
 function normalizeNextEpisodeThresholdMode(value) {
-  const mode = String(value || "").trim().toUpperCase();
+  const mode = String(value || "")
+    .trim()
+    .toUpperCase();
   return VALID_NEXT_EPISODE_THRESHOLD_MODES.has(mode) ? mode : "PERCENTAGE";
 }
 
@@ -24,8 +62,17 @@ function normalizeThresholdMinutesBeforeEnd(value) {
 
 function getOutroSegments(skipIntervals = []) {
   return (Array.isArray(skipIntervals) ? skipIntervals : [])
-    .filter((interval) => OUTRO_SEGMENT_TYPES.has(String(interval?.type || "").trim().toLowerCase()))
-    .filter((interval) => Number.isFinite(Number(interval?.startTime)) && Number.isFinite(Number(interval?.endTime)))
+    .filter((interval) =>
+      OUTRO_SEGMENT_TYPES.has(
+        String(interval?.type || "")
+          .trim()
+          .toLowerCase()
+      )
+    )
+    .filter(
+      (interval) =>
+        Number.isFinite(Number(interval?.startTime)) && Number.isFinite(Number(interval?.endTime))
+    )
     .map((interval) => ({
       startTime: Number(interval.startTime),
       endTime: Number(interval.endTime)
@@ -51,16 +98,19 @@ function shouldShowNextEpisodeCard({
     const latestOutroEndSeconds = Math.max(...outroSegments.map((interval) => interval.endTime));
     const postOutroGapSeconds = duration - latestOutroEndSeconds;
     const mode = normalizeNextEpisodeThresholdMode(thresholdMode);
-    const userThresholdSeconds = mode === "MINUTES_BEFORE_END"
-      ? normalizeThresholdMinutesBeforeEnd(thresholdMinutesBeforeEnd) * 60
-      : ((100 - normalizeThresholdPercent(thresholdPercent)) / 100) * duration;
+    const userThresholdSeconds =
+      mode === "MINUTES_BEFORE_END"
+        ? normalizeThresholdMinutesBeforeEnd(thresholdMinutesBeforeEnd) * 60
+        : ((100 - normalizeThresholdPercent(thresholdPercent)) / 100) * duration;
 
     if (postOutroGapSeconds > userThresholdSeconds) {
       if (mode === "MINUTES_BEFORE_END") {
         const remainingSeconds = duration - position;
-        return remainingSeconds <= normalizeThresholdMinutesBeforeEnd(thresholdMinutesBeforeEnd) * 60;
+        return (
+          remainingSeconds <= normalizeThresholdMinutesBeforeEnd(thresholdMinutesBeforeEnd) * 60
+        );
       }
-      return (position / duration) >= (normalizeThresholdPercent(thresholdPercent) / 100);
+      return position / duration >= normalizeThresholdPercent(thresholdPercent) / 100;
     }
 
     return position >= Math.min(...outroSegments.map((interval) => interval.startTime));
@@ -71,7 +121,7 @@ function shouldShowNextEpisodeCard({
     const remainingSeconds = duration - position;
     return remainingSeconds <= normalizeThresholdMinutesBeforeEnd(thresholdMinutesBeforeEnd) * 60;
   }
-  return (position / duration) >= (normalizeThresholdPercent(thresholdPercent) / 100);
+  return position / duration >= normalizeThresholdPercent(thresholdPercent) / 100;
 }
 
 function shouldEnterStillWatchingPrompt({
@@ -81,13 +131,16 @@ function shouldEnterStillWatchingPrompt({
   consecutiveAutoPlayCount = 0,
   threshold = 3
 } = {}) {
-  return Boolean(stillWatchingEnabled) &&
+  return (
+    Boolean(stillWatchingEnabled) &&
     Boolean(autoPlayNextEpisodeEnabled) &&
     Boolean(nextEpisodeHasAired) &&
-    Number(consecutiveAutoPlayCount || 0) >= Number(threshold || 0);
+    Number(consecutiveAutoPlayCount || 0) >= Number(threshold || 0)
+  );
 }
 
 export {
+  hasEpisodeAired,
   normalizeNextEpisodeThresholdMode,
   normalizeThresholdMinutesBeforeEnd,
   normalizeThresholdPercent,
