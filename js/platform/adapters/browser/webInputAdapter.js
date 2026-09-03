@@ -273,16 +273,16 @@ function saveWebVolumeState(volume, muted) {
 
 const DESKTOP_ICONS = {
   volumeHigh:
-    '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>',
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77zm-2.5-1.23L6.5 7H3c-.55 0-1 .45-1 1v8c0 .55.45 1 1 1h3.5l5 5c.67.67 1.5.2 1.5-.75V2.75c0-.95-.83-1.42-1.5-.75zm5 10c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>',
   volumeLow:
-    '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>',
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M11.5 2L6.5 7H3c-.55 0-1 .45-1 1v8c0 .55.45 1 1 1h3.5l5 5c.67.67 1.5.2 1.5-.75V2.75c0-.95-.83-1.42-1.5-.75zm5 10c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>',
   volumeMute:
-    '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>',
-  pip: '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 1.98 2 1.98h18c1.1 0 2-.88 2-1.98V5c0-1.1-.9-2-2-2zm0 16.01H3V4.98h18v14.03z"/></svg>',
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>',
+  pip: '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z"/></svg>',
   fullscreenEnter:
-    '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>',
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>',
   fullscreenExit:
-    '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>',
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>',
   chevronLeft:
     '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>',
   chevronRight:
@@ -290,7 +290,7 @@ const DESKTOP_ICONS = {
 };
 
 let volumeToastTimer = null;
-function showVolumeToast(text) {
+function showVolumeToast(text, iconType = "high") {
   if (typeof document === "undefined") return;
   let toast = document.querySelector(".web-player-volume-toast");
   if (!toast) {
@@ -298,7 +298,20 @@ function showVolumeToast(text) {
     toast.className = "web-player-volume-toast";
     document.body.appendChild(toast);
   }
-  toast.textContent = text;
+
+  let iconSvg = "";
+  if (iconType === "mute") {
+    iconSvg = DESKTOP_ICONS.volumeMute;
+  } else if (iconType === "low") {
+    iconSvg = DESKTOP_ICONS.volumeLow;
+  } else if (iconType === "high") {
+    iconSvg = DESKTOP_ICONS.volumeHigh;
+  }
+
+  toast.innerHTML = iconSvg
+    ? `<span class="web-player-volume-toast-icon">${iconSvg}</span><span class="web-player-volume-toast-text">${text}</span>`
+    : `<span class="web-player-volume-toast-text">${text}</span>`;
+
   toast.classList.add("is-visible");
   if (volumeToastTimer) clearTimeout(volumeToastTimer);
   volumeToastTimer = setTimeout(() => {
@@ -306,14 +319,14 @@ function showVolumeToast(text) {
   }, 1200);
 }
 
-function syncVolumeUi(volumeGroup = document.querySelector(".web-player-volume-group")) {
-  if (!volumeGroup) return;
+function syncVolumeUi(volumeCluster = document.querySelector(".web-player-volume-cluster")) {
+  if (!volumeCluster) return;
   const video = document.querySelector("#videoPlayer, video");
   const vol = video ? video.volume : getSavedWebVolume();
   const isMuted = video ? video.muted || vol === 0 : getSavedWebMuted();
 
-  const iconContainer = volumeGroup.querySelector(".web-player-volume-icon");
-  const slider = volumeGroup.querySelector(".web-player-volume-slider");
+  const iconContainer = volumeCluster.querySelector(".web-player-volume-icon");
+  const slider = volumeCluster.querySelector(".web-player-volume-slider");
 
   if (iconContainer) {
     if (isMuted || vol === 0) {
@@ -329,7 +342,7 @@ function syncVolumeUi(volumeGroup = document.querySelector(".web-player-volume-g
     const currentVal = isMuted ? 0 : vol;
     slider.value = String(currentVal);
     const pct = Math.round(currentVal * 100);
-    slider.style.background = `linear-gradient(to right, #ffffff 0%, #ffffff ${pct}%, rgba(255, 255, 255, 0.3) ${pct}%, rgba(255, 255, 255, 0.3) 100%)`;
+    slider.style.background = `linear-gradient(to right, #ffffff 0%, #ffffff ${pct}%, rgba(255, 255, 255, 0.28) ${pct}%, rgba(255, 255, 255, 0.28) 100%)`;
   }
 }
 
@@ -396,9 +409,9 @@ function ensureRowNavigationChevrons(row) {
   updateRowChevrons(row);
 }
 
-function bindVolumeGroupEvents(volumeGroup) {
-  const btn = volumeGroup.querySelector(".web-player-volume-btn");
-  const slider = volumeGroup.querySelector(".web-player-volume-slider");
+function bindVolumeGroupEvents(volumeCluster) {
+  const btn = volumeCluster.querySelector(".web-player-volume-btn");
+  const slider = volumeCluster.querySelector(".web-player-volume-slider");
 
   if (btn) {
     btn.addEventListener("click", (e) => {
@@ -413,12 +426,31 @@ function bindVolumeGroupEvents(volumeGroup) {
         video.volume = 0.5;
       }
       saveWebVolumeState(video.volume, isMuted);
-      syncVolumeUi(volumeGroup);
-      showVolumeToast(isMuted ? "🔇 Muted" : `🔊 ${Math.round(video.volume * 100)}%`);
+      syncVolumeUi(volumeCluster);
+      const percent = Math.round(video.volume * 100);
+      showVolumeToast(
+        isMuted ? "Muted" : `${percent}%`,
+        isMuted ? "mute" : percent < 50 ? "low" : "high"
+      );
     });
   }
 
   if (slider) {
+    slider.addEventListener("focus", () => {
+      volumeCluster.classList.add("is-active");
+    });
+    slider.addEventListener("blur", () => {
+      volumeCluster.classList.remove("is-active");
+    });
+    slider.addEventListener("mousedown", () => {
+      volumeCluster.classList.add("is-active");
+    });
+    window.addEventListener("mouseup", () => {
+      if (document.activeElement !== slider && !volumeCluster.matches(":hover")) {
+        volumeCluster.classList.remove("is-active");
+      }
+    });
+
     slider.addEventListener("input", (e) => {
       e.stopPropagation();
       const video = document.querySelector("#videoPlayer, video");
@@ -427,7 +459,7 @@ function bindVolumeGroupEvents(volumeGroup) {
         video.volume = val;
         video.muted = val === 0;
         saveWebVolumeState(val, video.muted);
-        syncVolumeUi(volumeGroup);
+        syncVolumeUi(volumeCluster);
       }
     });
 
@@ -436,7 +468,10 @@ function bindVolumeGroupEvents(volumeGroup) {
       const video = document.querySelector("#videoPlayer, video");
       if (video) {
         const percent = Math.round(video.volume * 100);
-        showVolumeToast(video.muted || video.volume === 0 ? "🔇 Muted" : `🔊 ${percent}%`);
+        showVolumeToast(
+          video.muted || video.volume === 0 ? "Muted" : `${percent}%`,
+          video.muted || video.volume === 0 ? "mute" : percent < 50 ? "low" : "high"
+        );
       }
     });
 
@@ -452,9 +487,12 @@ function bindVolumeGroupEvents(volumeGroup) {
           video.volume = newVol;
           video.muted = newVol === 0;
           saveWebVolumeState(newVol, video.muted);
-          syncVolumeUi(volumeGroup);
+          syncVolumeUi(volumeCluster);
           const percent = Math.round(newVol * 100);
-          showVolumeToast(newVol === 0 ? "🔇 Muted" : `🔊 ${percent}%`);
+          showVolumeToast(
+            newVol === 0 ? "Muted" : `${percent}%`,
+            newVol === 0 ? "mute" : percent < 50 ? "low" : "high"
+          );
         }
       },
       { passive: false }
@@ -501,42 +539,42 @@ function ensureDesktopPlayerControls(playerScreen = getActivePlayerScreen()) {
   const controlsRow = document.querySelector(".player-controls-row");
   if (!controlsRow) return;
 
-  // 1. Volume Group beside #playerControlButtons
-  let volumeGroup = controlsRow.querySelector(".web-player-volume-group");
-  if (!volumeGroup) {
-    volumeGroup = document.createElement("div");
-    volumeGroup.className = "web-player-volume-group";
-    volumeGroup.setAttribute("data-player-pointer-action", "volume");
-    volumeGroup.innerHTML = `
-      <button type="button" class="web-player-btn web-player-volume-btn" title="Mute (M)" aria-label="Volume">
-        <span class="web-player-volume-icon">${DESKTOP_ICONS.volumeHigh}</span>
+  // 1. Native-style Volume Cluster beside #playerControlButtons
+  let volumeCluster = controlsRow.querySelector(".web-player-volume-cluster");
+  if (!volumeCluster) {
+    volumeCluster = document.createElement("div");
+    volumeCluster.className = "web-player-volume-cluster";
+    volumeCluster.setAttribute("data-player-pointer-action", "volume");
+    volumeCluster.innerHTML = `
+      <button type="button" class="player-control-btn web-player-volume-btn focusable" title="Mute/Unmute (M)" aria-label="Volume">
+        <span class="player-control-icon web-player-volume-icon">${DESKTOP_ICONS.volumeHigh}</span>
       </button>
       <div class="web-player-volume-slider-wrapper">
-        <input type="range" class="web-player-volume-slider" min="0" max="1" step="0.02" value="1" aria-label="Volume Slider">
+        <input type="range" class="web-player-volume-slider focusable" min="0" max="1" step="0.02" value="1" aria-label="Volume Slider">
       </div>
     `;
 
     const controlButtons = controlsRow.querySelector("#playerControlButtons");
     if (controlButtons && controlButtons.nextSibling) {
-      controlsRow.insertBefore(volumeGroup, controlButtons.nextSibling);
+      controlsRow.insertBefore(volumeCluster, controlButtons.nextSibling);
     } else {
-      controlsRow.appendChild(volumeGroup);
+      controlsRow.appendChild(volumeCluster);
     }
 
-    bindVolumeGroupEvents(volumeGroup);
+    bindVolumeGroupEvents(volumeCluster);
   }
 
-  // 2. Desktop Right Controls (PiP + Fullscreen)
+  // 2. Desktop Right Controls (PiP + Fullscreen) matching .player-control-btn
   let desktopRight = controlsRow.querySelector(".web-player-desktop-right");
   if (!desktopRight) {
     desktopRight = document.createElement("div");
     desktopRight.className = "web-player-desktop-right";
     desktopRight.innerHTML = `
-      <button type="button" class="web-player-btn web-player-pip-btn" title="Picture in Picture (P)" aria-label="Picture in Picture">
-        ${DESKTOP_ICONS.pip}
+      <button type="button" class="player-control-btn web-player-pip-btn focusable" title="Picture in Picture (P)" aria-label="Picture in Picture">
+        <span class="player-control-icon">${DESKTOP_ICONS.pip}</span>
       </button>
-      <button type="button" class="web-player-btn web-player-fullscreen-btn" title="Fullscreen (F)" aria-label="Fullscreen">
-        <span class="web-player-fullscreen-icon">${document.fullscreenElement ? DESKTOP_ICONS.fullscreenExit : DESKTOP_ICONS.fullscreenEnter}</span>
+      <button type="button" class="player-control-btn web-player-fullscreen-btn focusable" title="Fullscreen (F)" aria-label="Fullscreen">
+        <span class="player-control-icon web-player-fullscreen-icon">${document.fullscreenElement ? DESKTOP_ICONS.fullscreenExit : DESKTOP_ICONS.fullscreenEnter}</span>
       </button>
     `;
 
@@ -544,7 +582,7 @@ function ensureDesktopPlayerControls(playerScreen = getActivePlayerScreen()) {
     bindDesktopRightEvents(desktopRight);
   }
 
-  syncVolumeUi(volumeGroup);
+  syncVolumeUi(volumeCluster);
   syncFullscreenUi(desktopRight);
 }
 
@@ -647,7 +685,7 @@ function findFocusableTarget(node) {
       ".player-dialog-item, .player-sources-item, [data-sources-zone], [data-subtitle-rail], " +
       "[data-audio-column], [data-speed-index], [data-episode-stream-index], " +
       "[data-player-post-play-action], .player-post-play-action, .player-post-play-synopsis, [data-player-post-play-modal], " +
-      ".web-player-btn, .web-player-volume-group, .web-player-volume-slider, .web-player-desktop-right, " +
+      ".web-player-volume-btn, .web-player-volume-cluster, .web-player-volume-slider, .web-player-pip-btn, .web-player-fullscreen-btn, .web-player-desktop-right, " +
       '.sidebar-item, .settings-item, .profile-card, .nuvio-dialog-btn, .tab-item, [role="button"]'
   );
 
@@ -1377,7 +1415,10 @@ function handleKeyDown(event) {
         saveWebVolumeState(videoElem.volume, isMuted);
         syncVolumeUi();
         const percent = Math.round(videoElem.volume * 100);
-        showVolumeToast(isMuted ? "🔇 Muted" : `🔊 ${percent}%`);
+        showVolumeToast(
+          isMuted ? "Muted" : `${percent}%`,
+          isMuted ? "mute" : percent < 50 ? "low" : "high"
+        );
       }
       return;
     }
@@ -1467,7 +1508,10 @@ function handleKeyDown(event) {
           saveWebVolumeState(newVol, video.muted);
           syncVolumeUi();
           const percent = Math.round(newVol * 100);
-          showVolumeToast(newVol === 0 ? "🔇 Muted" : `🔊 ${percent}%`);
+          showVolumeToast(
+            newVol === 0 ? "Muted" : `${percent}%`,
+            newVol === 0 ? "mute" : percent < 50 ? "low" : "high"
+          );
         }
         return;
       }
@@ -1674,7 +1718,10 @@ function handleWheel(event) {
         saveWebVolumeState(newVol, video.muted);
         syncVolumeUi();
         const percent = Math.round(newVol * 100);
-        showVolumeToast(newVol === 0 ? "🔇 Muted" : `🔊 ${percent}%`);
+        showVolumeToast(
+          newVol === 0 ? "Muted" : `${percent}%`,
+          newVol === 0 ? "mute" : percent < 50 ? "low" : "high"
+        );
       }
       return;
     }
