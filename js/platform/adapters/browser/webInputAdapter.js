@@ -578,7 +578,9 @@ function findFocusableTarget(node) {
   const focusable = node.closest(
     ".focusable, button, a, input, textarea, select, [data-action], [data-action-id], [data-mode], [data-layout], [tabindex], " +
       ".home-content-card, .meta-cast-card, .catalog-card, .stream-card, " +
-      ".episode-card, .tmdb-entity-card, .experience-mode-card, .catalog-order-focusable, .addons-focusable, .license-row, " +
+      ".episode-card, .series-episode-card, .tmdb-entity-card, .experience-mode-card, .catalog-order-focusable, .addons-focusable, .license-row, " +
+      ".series-primary-btn, .series-secondary-btn, .series-circle-btn, .series-season-btn, .series-insight-tab, " +
+      ".detail-morelike-card, .series-stream-card, .series-stream-filter, .series-stream-overlay-backdrop, " +
       ".player-control-btn, .player-control-button, .player-action-btn, " +
       ".player-progress-shell, .player-header-back-btn, .player-back-btn, " +
       ".player-dialog-item, .player-sources-item, [data-sources-zone], [data-subtitle-rail], " +
@@ -655,6 +657,9 @@ function removeTimelineTooltip(playerScreen = null) {
 }
 
 function triggerFallbackActivation(target, currentScreen, event) {
+  if (!target) return;
+  FocusEngine.focusPointerTarget(target, event);
+
   const enterEvent = new KeyboardEvent("keydown", {
     key: "Enter",
     code: "Enter",
@@ -666,6 +671,16 @@ function triggerFallbackActivation(target, currentScreen, event) {
 
   target.dispatchEvent(enterEvent);
 
+  if (typeof currentScreen?.onKeyDown === "function") {
+    const normalized = Platform.normalizeKey(enterEvent);
+    normalized.target = target;
+    try {
+      currentScreen.onKeyDown(normalized);
+    } catch (e) {
+      console.warn("Screen onKeyDown fallback error:", e);
+    }
+  }
+
   const enterKeyUp = new KeyboardEvent("keyup", {
     key: "Enter",
     code: "Enter",
@@ -676,13 +691,13 @@ function triggerFallbackActivation(target, currentScreen, event) {
   });
   target.dispatchEvent(enterKeyUp);
 
-  if (typeof currentScreen?.onKeyDown === "function") {
-    const normalized = Platform.normalizeKey(enterEvent);
-    normalized.target = target;
+  if (typeof currentScreen?.onKeyUp === "function") {
+    const normalizedUp = Platform.normalizeKey(enterKeyUp);
+    normalizedUp.target = target;
     try {
-      currentScreen.onKeyDown(normalized);
+      currentScreen.onKeyUp(normalizedUp);
     } catch (e) {
-      console.warn("Screen onKeyDown fallback error:", e);
+      console.warn("Screen onKeyUp fallback error:", e);
     }
   }
 }
@@ -759,6 +774,179 @@ function handleContextMenu(event) {
     event.stopPropagation();
     triggerProfileOptionsDialog(profileCard);
   }
+}
+
+function handleDetailPointerClick(target, event, currentScreen) {
+  if (!target || !currentScreen) return false;
+  const actionTarget = target.closest("[data-action]") || target;
+  const action = String(actionTarget.dataset?.action || "");
+
+  // 1. Play Default (Movie or Series hero play button)
+  if (action === "playDefault") {
+    event.preventDefault();
+    event.stopPropagation();
+    void currentScreen.playDefaultFromHero?.();
+    return true;
+  }
+
+  // 2. Play from Beginning
+  if (action === "playFromBeginning") {
+    event.preventDefault();
+    event.stopPropagation();
+    void currentScreen.playDefaultFromHero?.({ startOver: true });
+    return true;
+  }
+
+  // 3. Toggle Library
+  if (action === "toggleLibrary") {
+    event.preventDefault();
+    event.stopPropagation();
+    void currentScreen.toggleLibraryFromHero?.();
+    return true;
+  }
+
+  // 4. Toggle Watched
+  if (action === "toggleWatched") {
+    event.preventDefault();
+    event.stopPropagation();
+    void currentScreen.toggleWatchedFromHero?.();
+    return true;
+  }
+
+  // 5. Toggle Trailer
+  if (action === "toggleTrailer") {
+    event.preventDefault();
+    event.stopPropagation();
+    currentScreen.playTrailer?.({ muted: false, restart: true, initiatedByUser: true });
+    return true;
+  }
+
+  // 6. Season Selection Button
+  if (action === "selectSeason" || target.closest(".series-season-btn")) {
+    const seasonBtn = target.closest(".series-season-btn") || actionTarget;
+    const season = Number(seasonBtn.dataset?.season ?? currentScreen.selectedSeason ?? 0);
+    if (season >= 0 && season !== currentScreen.selectedSeason) {
+      event.preventDefault();
+      event.stopPropagation();
+      currentScreen.hasManualSeasonSelection = true;
+      currentScreen.selectedSeason = season;
+      currentScreen.render?.(currentScreen.meta, {
+        selector: `.series-season-btn[data-season="${season}"]`
+      });
+      return true;
+    }
+  }
+
+  // 7. Episode Card in Season Carousel
+  if (action === "openEpisodeStreams" || target.closest(".series-episode-card")) {
+    const episodeCard = target.closest(".series-episode-card") || actionTarget;
+    const videoId = episodeCard.dataset?.videoId;
+    if (videoId) {
+      event.preventDefault();
+      event.stopPropagation();
+      void currentScreen.openEpisodeStreamChooser?.(videoId);
+      return true;
+    }
+  }
+
+  // 8. Stream Selection from Chooser (Episode or Movie)
+  if (
+    action === "playEpisodeStream" ||
+    target.closest(".series-stream-card[data-action='playEpisodeStream']")
+  ) {
+    const streamCard = target.closest(".series-stream-card") || actionTarget;
+    const streamId = streamCard.dataset?.streamId;
+    if (streamId) {
+      event.preventDefault();
+      event.stopPropagation();
+      currentScreen.playEpisodeFromSelectedStream?.(streamId);
+      return true;
+    }
+  }
+
+  if (
+    action === "playPendingStream" ||
+    target.closest(".series-stream-card[data-action='playPendingStream']")
+  ) {
+    const streamCard = target.closest(".series-stream-card") || actionTarget;
+    const streamId = streamCard.dataset?.streamId;
+    if (streamId) {
+      event.preventDefault();
+      event.stopPropagation();
+      currentScreen.playMovieFromSelectedStream?.(streamId);
+      return true;
+    }
+  }
+
+  // 9. Stream Filter Buttons (Addons)
+  if (action === "setStreamFilter" || target.closest(".series-stream-filter")) {
+    const filterBtn = target.closest(".series-stream-filter") || actionTarget;
+    const addon = filterBtn.dataset?.addon || "all";
+    event.preventDefault();
+    event.stopPropagation();
+    if (currentScreen.pendingEpisodeSelection) {
+      currentScreen.pendingEpisodeSelection.addonFilter = addon;
+      currentScreen.renderEpisodeStreamChooser?.();
+      return true;
+    }
+    if (currentScreen.pendingMovieSelection) {
+      currentScreen.pendingMovieSelection.addonFilter = addon;
+      currentScreen.renderMovieStreamChooser?.();
+      return true;
+    }
+    return true;
+  }
+
+  // 10. Dismiss Stream Chooser Backdrop
+  if (target.matches(".series-stream-overlay-backdrop, .series-stream-overlay")) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (currentScreen.pendingEpisodeSelection) {
+      currentScreen.pendingEpisodeSelection = null;
+      currentScreen.renderEpisodeStreamChooser?.();
+      return true;
+    }
+    if (currentScreen.pendingMovieSelection) {
+      currentScreen.pendingMovieSelection = null;
+      currentScreen.renderMovieStreamChooser?.();
+      return true;
+    }
+  }
+
+  // 11. Insight Tabs (Cast, Ratings, More Like This, Trailer, Collection)
+  if (
+    action === "setSeriesInsightTab" ||
+    action === "setMovieInsightTab" ||
+    target.closest(".series-insight-tab")
+  ) {
+    const tabBtn = target.closest(".series-insight-tab") || actionTarget;
+    const tab = String(tabBtn.dataset?.tab || "");
+    if (tab) {
+      event.preventDefault();
+      event.stopPropagation();
+      const isSeries =
+        typeof currentScreen.episodes !== "undefined" && Array.isArray(currentScreen.episodes);
+      if (isSeries) {
+        currentScreen.seriesInsightTab = tab;
+      } else {
+        currentScreen.movieInsightTab = tab;
+      }
+      currentScreen.updateRenderedDetailSections?.(currentScreen.meta);
+      return true;
+    }
+  }
+
+  // 12. More Like This Poster Cards
+  if (target.closest(".detail-morelike-card")) {
+    const morelikeCard = target.closest(".detail-morelike-card");
+    if (typeof currentScreen.openTmdbEntityFromNode === "function") {
+      event.preventDefault();
+      event.stopPropagation();
+      return Boolean(currentScreen.openTmdbEntityFromNode(morelikeCard));
+    }
+  }
+
+  return false;
 }
 
 function handlePointerClick(event) {
@@ -865,27 +1053,31 @@ function handlePointerClick(event) {
     return;
   }
 
-  const hasNativeClick =
-    target.tagName === "BUTTON" || target.tagName === "A" || typeof target.onclick === "function";
+  // 1. Direct handle for Detail screen actions (Play, Episodes, Seasons, Library, Streams)
+  const isDetailScreen =
+    Router.getCurrent?.() === "detail" ||
+    currentScreen?.name === "detail" ||
+    Boolean(target.closest(".series-detail-screen, .series-detail-content, .detail-hero-section"));
+  if (isDetailScreen && handleDetailPointerClick(target, event, currentScreen)) {
+    return;
+  }
 
+  // 2. Allow onPointerActivate if provided by the screen
   if (typeof currentScreen?.onPointerActivate === "function") {
     Promise.resolve(currentScreen.onPointerActivate(target, event))
       .then((handled) => {
-        if (!handled && !hasNativeClick) {
+        if (!handled) {
           triggerFallbackActivation(target, currentScreen, event);
         }
       })
       .catch(() => {
-        if (!hasNativeClick) {
-          triggerFallbackActivation(target, currentScreen, event);
-        }
+        triggerFallbackActivation(target, currentScreen, event);
       });
     return;
   }
 
-  if (!hasNativeClick) {
-    triggerFallbackActivation(target, currentScreen, event);
-  }
+  // 3. Fallback activation (Enter keydown + keyup on focused node)
+  triggerFallbackActivation(target, currentScreen, event);
 }
 
 function handleAuxClick(event) {

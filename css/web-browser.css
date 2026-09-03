@@ -49,6 +49,16 @@ body.platform-browser.player-cursor-hidden * {
 .platform-browser .player-progress-shell,
 .platform-browser .player-header-back-btn,
 .platform-browser .player-back-btn,
+.platform-browser .series-primary-btn,
+.platform-browser .series-secondary-btn,
+.platform-browser .series-circle-btn,
+.platform-browser .series-episode-card,
+.platform-browser .series-season-btn,
+.platform-browser .series-insight-tab,
+.platform-browser .detail-morelike-card,
+.platform-browser .series-stream-card,
+.platform-browser .series-stream-filter,
+.platform-browser .series-stream-overlay-backdrop,
 .platform-browser .sidebar-item,
 .platform-browser .settings-item,
 .platform-browser .profile-card,
@@ -97,11 +107,44 @@ body.platform-browser.player-cursor-hidden * {
 .platform-browser .catalog-card:hover,
 .platform-browser .stream-card:hover,
 .platform-browser .episode-card:hover,
+.platform-browser .series-episode-card:hover,
 .platform-browser .tmdb-entity-card:hover,
+.platform-browser .detail-morelike-card:hover,
 .platform-browser .experience-mode-card:hover {
   outline: 2px solid rgba(255, 255, 255, 0.7) !important;
   outline-offset: 2px;
   z-index: 5;
+}
+
+/* Detail Screen Buttons & Stream Chooser */
+.platform-browser .series-primary-btn:hover {
+  filter: brightness(1.18) !important;
+  transform: scale(1.02);
+  transition:
+    transform 0.15s ease,
+    filter 0.15s ease;
+}
+
+.platform-browser .series-secondary-btn:hover,
+.platform-browser .series-circle-btn:hover,
+.platform-browser .series-season-btn:hover,
+.platform-browser .series-insight-tab:hover {
+  background-color: rgba(255, 255, 255, 0.2) !important;
+  transition: background-color 0.15s ease;
+}
+
+.platform-browser .series-stream-card:hover {
+  background-color: rgba(255, 255, 255, 0.12) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  transform: translateY(-2px);
+  transition:
+    transform 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.platform-browser .series-stream-filter:hover {
+  background-color: rgba(255, 255, 255, 0.2) !important;
 }
 
 /* Player Mouse Overlay & Cursor */
