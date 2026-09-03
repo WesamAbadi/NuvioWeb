@@ -28,29 +28,34 @@ export const LIBRARY_VIEW_MODE = { SAVED: "saved", CLOUD: "cloud" };
 
 export const LIBRARY_SORT_OPTIONS = [
   {
-    key: "default",
+    key: LibrarySortOptionKey.DEFAULT,
     labelKey: "library_sort_trakt_order",
     fallback: "Trakt Order"
   },
   {
-    key: "added_desc",
+    key: LibrarySortOptionKey.ADDED_DESC,
     labelKey: "library_sort_added_desc",
     fallback: "Added ↓"
   },
-  { key: "added_asc", labelKey: "library_sort_added_asc", fallback: "Added ↑" },
+  { key: LibrarySortOptionKey.ADDED_ASC, labelKey: "library_sort_added_asc", fallback: "Added ↑" },
   {
-    key: "title_asc",
+    key: LibrarySortOptionKey.TITLE_ASC,
     labelKey: "library_sort_title_asc",
     fallback: "Title A-Z"
   },
   {
-    key: "title_desc",
+    key: LibrarySortOptionKey.TITLE_DESC,
     labelKey: "library_sort_title_desc",
     fallback: "Title Z-A"
   }
 ];
 
-export const LIBRARY_PRIVACY_OPTIONS = ["private", "link", "friends", "public"];
+export const LIBRARY_PRIVACY_OPTIONS = [
+  LibraryListPrivacy.PRIVATE,
+  LibraryListPrivacy.LINK,
+  LibraryListPrivacy.FRIENDS,
+  LibraryListPrivacy.PUBLIC
+];
 
 let persistedPosterFocusKey = null;
 let persistedLibraryViewMode = LIBRARY_VIEW_MODE.SAVED;

@@ -1355,15 +1355,29 @@ export function initWebInputAdapter() {
   });
 
   try {
-    const observer = new MutationObserver(() => {
-      const controlsRow = document.querySelector(".player-controls-row");
-      if (controlsRow) {
-        const ps = getActivePlayerScreen();
+    patchPlayerScreenIfNeeded(Router.routes?.player);
+    let checkPending = false;
+    const checkPlayerControls = () => {
+      checkPending = false;
+      const ps = getActivePlayerScreen();
+      if (ps) {
         patchPlayerScreenIfNeeded(ps);
         ensureDesktopPlayerControls(ps);
       }
+    };
+
+    const observer = new MutationObserver((mutations) => {
+      if (checkPending) return;
+      for (const m of mutations) {
+        if (m.addedNodes.length > 0) {
+          checkPending = true;
+          requestAnimationFrame(checkPlayerControls);
+          break;
+        }
+      }
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    const targetRoot = document.getElementById("app") || document.body;
+    observer.observe(targetRoot, { childList: true, subtree: true });
   } catch (_) {}
 
   document.addEventListener(

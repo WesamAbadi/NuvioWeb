@@ -1,6 +1,5 @@
 /* global __NUVIO_APP_VERSION__ */
 
-import "./platform/adapters/browser/webInputAdapter.js";
 import "./core/diagnostics/consoleDebugBuffer.js";
 import { detailWatchedEnrichmentService } from "./data/repository/detailWatchedEnrichmentService.js";
 import { Router } from "./ui/navigation/router.js";
