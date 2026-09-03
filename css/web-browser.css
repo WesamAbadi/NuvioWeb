@@ -484,3 +484,112 @@ body.platform-browser.player-cursor-hidden * {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+
+/* Phase 3: Drag-to-Scroll on Horizontal Rails */
+.platform-browser.is-dragging-row,
+.platform-browser.is-dragging-row * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+.platform-browser .home-row-cards.is-dragging *,
+.platform-browser .catalog-cards-row.is-dragging *,
+.platform-browser .series-episode-track.is-dragging *,
+.platform-browser .meta-cast-row.is-dragging * {
+  pointer-events: none !important;
+}
+
+/* Phase 3: Carousel Navigation Chevrons */
+.platform-browser .home-row,
+.platform-browser .catalog-row,
+.platform-browser .series-episodes-section,
+.platform-browser .series-episode-track-wrapper,
+.platform-browser .meta-cast-section {
+  position: relative !important;
+}
+
+.platform-browser .web-carousel-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(18, 20, 26, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer !important;
+  z-index: 30;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    transform 0.15s ease,
+    background-color 0.15s ease;
+  pointer-events: auto !important;
+}
+
+.platform-browser .home-row:hover .web-carousel-arrow,
+.platform-browser .catalog-row:hover .web-carousel-arrow,
+.platform-browser .series-episodes-section:hover .web-carousel-arrow,
+.platform-browser .meta-cast-section:hover .web-carousel-arrow,
+.platform-browser .web-carousel-arrow:hover {
+  opacity: 1;
+}
+
+.platform-browser .web-carousel-arrow:hover {
+  background: rgba(36, 42, 54, 0.96) !important;
+  border-color: rgba(255, 255, 255, 0.4) !important;
+  transform: translateY(-50%) scale(1.1);
+}
+
+.platform-browser .web-carousel-arrow:active {
+  transform: translateY(-50%) scale(0.95);
+}
+
+.platform-browser .web-carousel-prev {
+  left: 12px;
+}
+
+.platform-browser .web-carousel-next {
+  right: 12px;
+}
+
+/* Phase 3: Search Bar Clear Button */
+.platform-browser .web-search-clear-btn {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  font-size: 20px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease;
+  z-index: 5;
+}
+
+.platform-browser .web-search-clear-btn:hover {
+  background: rgba(255, 255, 255, 0.35) !important;
+  transform: translateY(-50%) scale(1.1);
+}
+
+.platform-browser .web-search-clear-btn:active {
+  transform: translateY(-50%) scale(0.95);
+}

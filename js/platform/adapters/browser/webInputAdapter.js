@@ -14,6 +14,10 @@ import {
   SUBTITLE_VIRTUALIZATION_OVERSCAN_PX,
   SUBTITLE_VIRTUALIZATION_MIN_WINDOW
 } from "../../../ui/screens/player/subtitleVirtualizer.js";
+import {
+  PosterOptionsDialogController,
+  posterItemFromNode
+} from "../../../ui/components/posterOptionsMenu.js";
 
 // Bypass WebAudio MediaElementSource capture on HTMLMediaElement in browser mode
 // to prevent Chrome CORS MediaElementAudioSource zero-audio restrictions completely.
@@ -278,7 +282,11 @@ const DESKTOP_ICONS = {
   fullscreenEnter:
     '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>',
   fullscreenExit:
-    '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>'
+    '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>',
+  chevronLeft:
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>',
+  chevronRight:
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>'
 };
 
 let volumeToastTimer = null;
@@ -333,6 +341,59 @@ function syncFullscreenUi(desktopRight = document.querySelector(".web-player-des
       ? DESKTOP_ICONS.fullscreenExit
       : DESKTOP_ICONS.fullscreenEnter;
   }
+}
+
+function updateRowChevrons(row) {
+  if (!row) return;
+  const container =
+    row.closest(".home-row, .catalog-row, .series-episodes-section, .meta-cast-section") ||
+    row.parentElement;
+  if (!container) return;
+  const prevBtn = container.querySelector(".web-carousel-prev");
+  const nextBtn = container.querySelector(".web-carousel-next");
+  if (prevBtn) {
+    prevBtn.style.display = row.scrollLeft > 10 ? "flex" : "none";
+  }
+  if (nextBtn) {
+    const isAtEnd = row.scrollLeft + row.clientWidth >= row.scrollWidth - 10;
+    nextBtn.style.display = isAtEnd ? "none" : "flex";
+  }
+}
+
+function ensureRowNavigationChevrons(row) {
+  if (!row || row.scrollWidth <= row.clientWidth + 20) return;
+  const container =
+    row.closest(".home-row, .catalog-row, .series-episodes-section, .meta-cast-section") ||
+    row.parentElement;
+  if (!container || container.querySelector(".web-carousel-arrow")) return;
+
+  const prevBtn = document.createElement("button");
+  prevBtn.className = "web-carousel-arrow web-carousel-prev";
+  prevBtn.type = "button";
+  prevBtn.setAttribute("aria-label", "Scroll left");
+  prevBtn.innerHTML = DESKTOP_ICONS.chevronLeft;
+  prevBtn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    row.scrollBy({ left: -row.clientWidth * 0.75, behavior: "smooth" });
+  };
+
+  const nextBtn = document.createElement("button");
+  nextBtn.className = "web-carousel-arrow web-carousel-next";
+  nextBtn.type = "button";
+  nextBtn.setAttribute("aria-label", "Scroll right");
+  nextBtn.innerHTML = DESKTOP_ICONS.chevronRight;
+  nextBtn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    row.scrollBy({ left: row.clientWidth * 0.75, behavior: "smooth" });
+  };
+
+  container.appendChild(prevBtn);
+  container.appendChild(nextBtn);
+
+  row.addEventListener("scroll", () => updateRowChevrons(row), { passive: true });
+  updateRowChevrons(row);
 }
 
 function bindVolumeGroupEvents(volumeGroup) {
@@ -719,9 +780,68 @@ function triggerProfileOptionsDialog(profileCard) {
   return false;
 }
 
+let adapterPosterOptionsController = null;
+
+async function triggerPosterOptionsMenu(card) {
+  if (!card) return false;
+  const currentScreen = Router.getCurrentScreen();
+  if (typeof currentScreen?.openPosterOptionsMenu === "function") {
+    return currentScreen.openPosterOptionsMenu(card);
+  }
+
+  const item = posterItemFromNode(card, card.dataset?.itemType || "movie");
+  if (!item?.id) return false;
+
+  if (!adapterPosterOptionsController) {
+    adapterPosterOptionsController = new PosterOptionsDialogController({
+      onDetails: (target) => {
+        Router.navigate("detail", {
+          itemId: target.id,
+          itemType: target.type || "movie",
+          fallbackTitle: target.title || "Untitled",
+          fallbackPoster: target.poster || "",
+          fallbackBackground: target.background || "",
+          addonBaseUrl: target.addonBaseUrl || "",
+          addonId: target.addonId || "",
+          addonName: target.addonName || "",
+          catalogType: target.catalogType || target.type || "movie"
+        });
+      },
+      onDismiss: () => {
+        FocusEngine.focusPointerTarget(card);
+      },
+      onChanged: () => {
+        currentScreen?.render?.();
+      }
+    });
+  }
+
+  return adapterPosterOptionsController.open(item, {
+    focusKey: card.dataset?.focusKey || "",
+    itemIndex: -1
+  });
+}
+
+const HORIZONTAL_ROW_SELECTOR =
+  ".home-row-cards, .catalog-cards-row, .collection-items-row, " +
+  ".meta-cast-row, .series-episode-track, .series-insight-tabs, [data-scroll-row], .horizontal-scroll";
+
+let activeDragRow = null;
+let dragStartX = 0;
+let dragStartScrollLeft = 0;
+let hasDragged = false;
+
 function handlePointerDown(event) {
   unmuteAndUnlockAudio();
   if (event.button !== 0) return;
+
+  const row = event.target?.closest?.(HORIZONTAL_ROW_SELECTOR);
+  if (row && row.scrollWidth > row.clientWidth) {
+    activeDragRow = row;
+    dragStartX = event.clientX;
+    dragStartScrollLeft = row.scrollLeft;
+    hasDragged = false;
+  }
 
   const profileCard = event.target?.closest?.(".profile-card[data-profile-id]");
   if (profileCard) {
@@ -756,6 +876,17 @@ function handlePointerUp(event) {
   }
   profileHoldTargetCard = null;
 
+  if (activeDragRow) {
+    document.body.classList.remove("is-dragging-row");
+    activeDragRow.classList.remove("is-dragging");
+    if (hasDragged) {
+      setTimeout(() => {
+        hasDragged = false;
+      }, 60);
+    }
+    activeDragRow = null;
+  }
+
   if (isScrubbing) {
     isScrubbing = false;
     const playerScreen = getActivePlayerScreen();
@@ -767,12 +898,23 @@ function handlePointerUp(event) {
   }
 }
 
-function handleContextMenu(event) {
+async function handleContextMenu(event) {
   const profileCard = event.target?.closest?.(".profile-card[data-profile-id]");
   if (profileCard) {
     event.preventDefault();
     event.stopPropagation();
     triggerProfileOptionsDialog(profileCard);
+    return;
+  }
+
+  const card = event.target?.closest?.(
+    ".home-content-card, .catalog-card, .meta-cast-card, .detail-morelike-card, .stream-card, .series-episode-card"
+  );
+  if (card) {
+    event.preventDefault();
+    event.stopPropagation();
+    await triggerPosterOptionsMenu(card);
+    return;
   }
 }
 
@@ -953,6 +1095,13 @@ function handlePointerClick(event) {
   unmuteAndUnlockAudio();
   if (event.button === 2) return;
 
+  if (hasDragged) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    return;
+  }
+
   const now = Date.now();
   const rawTarget = event.target;
   if (!(rawTarget instanceof Element)) return;
@@ -1093,6 +1242,26 @@ function handleAuxClick(event) {
 }
 
 function handlePointerMove(event) {
+  if (activeDragRow && event.buttons & 1) {
+    const dx = event.clientX - dragStartX;
+    if (!hasDragged && Math.abs(dx) > 6) {
+      hasDragged = true;
+      document.body.classList.add("is-dragging-row");
+      activeDragRow.classList.add("is-dragging");
+    }
+    if (hasDragged) {
+      event.preventDefault();
+      activeDragRow.scrollLeft = dragStartScrollLeft - dx;
+      updateRowChevrons(activeDragRow);
+      return;
+    }
+  }
+
+  const hoveredRow = event.target?.closest?.(HORIZONTAL_ROW_SELECTOR);
+  if (hoveredRow) {
+    ensureRowNavigationChevrons(hoveredRow);
+  }
+
   const playerScreen = getActivePlayerScreen();
   if (playerScreen) {
     unmuteAndUnlockAudio();
@@ -1361,6 +1530,33 @@ function handleKeyDown(event) {
 
   if (isEditableTarget(target)) {
     const key = event.key;
+    const keyCode = Number(event.keyCode || event.which || 0);
+
+    if (key === "Enter" || keyCode === 13) {
+      event.preventDefault();
+      event.stopPropagation();
+      const currentScreen = Router.getCurrentScreen();
+      if (typeof currentScreen?.runSearchFromInput === "function") {
+        void currentScreen.runSearchFromInput(target, { autoFocusResults: true });
+      }
+      target.blur?.();
+      return;
+    }
+
+    if (key === "Escape" || keyCode === 27) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (target.id === "searchInput") {
+        target.value = "";
+        const currentScreen = Router.getCurrentScreen();
+        if (typeof currentScreen?.runSearchFromInput === "function") {
+          void currentScreen.runSearchFromInput(target, { autoFocusResults: false });
+        }
+      }
+      target.blur?.();
+      return;
+    }
+
     const isEditingKey =
       key === "Backspace" ||
       key === "Delete" ||
@@ -1371,13 +1567,12 @@ function handleKeyDown(event) {
       key === "Home" ||
       key === "End" ||
       key === " " ||
-      key.length === 1;
+      key.length === 1 ||
+      event.ctrlKey ||
+      event.metaKey;
 
     if (isEditingKey) {
       event.stopPropagation();
-      if (key === "Enter") {
-        target.blur?.();
-      }
       return;
     }
   }
@@ -1516,6 +1711,105 @@ function handleWheel(event) {
   }
 }
 
+function ensureSearchInputClearButton() {
+  const input = document.querySelector("#searchInput");
+  if (!input) return;
+  const parent = input.parentElement;
+  if (!parent || parent.querySelector(".web-search-clear-btn")) return;
+
+  parent.style.position = "relative";
+  const clearBtn = document.createElement("button");
+  clearBtn.className = "web-search-clear-btn";
+  clearBtn.type = "button";
+  clearBtn.setAttribute("aria-label", "Clear search");
+  clearBtn.innerHTML = "&times;";
+  clearBtn.style.display = input.value?.length > 0 ? "flex" : "none";
+
+  clearBtn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    input.value = "";
+    clearBtn.style.display = "none";
+    input.focus();
+    const currentScreen = Router.getCurrentScreen();
+    currentScreen?.runSearchFromInput?.(input, { autoFocusResults: false });
+  };
+
+  input.addEventListener("input", () => {
+    clearBtn.style.display = input.value?.length > 0 ? "flex" : "none";
+  });
+
+  parent.appendChild(clearBtn);
+}
+
+function syncHashWithRoute(routeName, params = {}) {
+  if (!routeName || typeof window === "undefined") return;
+  const searchParams = new URLSearchParams();
+  if (params && typeof params === "object") {
+    for (const [key, value] of Object.entries(params)) {
+      if (value != null && typeof value !== "object" && typeof value !== "function") {
+        searchParams.set(key, String(value));
+      }
+    }
+  }
+  const queryStr = searchParams.toString();
+  const newHash = queryStr ? `#/${routeName}?${queryStr}` : `#/${routeName}`;
+  if (window.location.hash !== newHash) {
+    window.history.replaceState({ route: routeName, params }, "", newHash);
+  }
+}
+
+function parseHashRoute() {
+  if (typeof window === "undefined" || !window.location.hash) return null;
+  const hash = window.location.hash.replace(/^#\/?/, "");
+  if (!hash) return null;
+  const [routePart, queryPart] = hash.split("?");
+  const routeName = routePart?.trim();
+  if (!routeName || !Router.routes?.[routeName]) return null;
+  const params = {};
+  if (queryPart) {
+    const searchParams = new URLSearchParams(queryPart);
+    for (const [key, val] of searchParams.entries()) {
+      params[key] = val;
+    }
+  }
+  return { routeName, params };
+}
+
+function patchRouterForWebHistory() {
+  if (typeof Router === "undefined" || Router._webHistoryPatched) return;
+  Router._webHistoryPatched = true;
+
+  const origNavigate = Router.navigate;
+  Router.navigate = async function (routeName, params = {}, options = {}) {
+    const res = await origNavigate.call(this, routeName, params, options);
+    try {
+      syncHashWithRoute(routeName, params);
+    } catch (_) {}
+    return res;
+  };
+
+  window.addEventListener("popstate", () => {
+    const target = parseHashRoute();
+    if (target && target.routeName !== Router.getCurrent()) {
+      Router.navigate(target.routeName, target.params, { skipStackPush: true });
+    }
+  });
+
+  // Check if direct link was requested on load
+  const initial = parseHashRoute();
+  if (initial && initial.routeName !== "home") {
+    const checkReady = () => {
+      if (Router.getCurrent()) {
+        Router.navigate(initial.routeName, initial.params, { skipStackPush: true });
+      } else {
+        setTimeout(checkReady, 150);
+      }
+    };
+    setTimeout(checkReady, 350);
+  }
+}
+
 export function initWebInputAdapter() {
   if (initialized) return;
   initialized = true;
@@ -1546,16 +1840,19 @@ export function initWebInputAdapter() {
     syncFullscreenUi();
   });
 
+  patchRouterForWebHistory();
+
   try {
     patchPlayerScreenIfNeeded(Router.routes?.player);
     let checkPending = false;
-    const checkPlayerControls = () => {
+    const checkDomElements = () => {
       checkPending = false;
       const ps = getActivePlayerScreen();
       if (ps) {
         patchPlayerScreenIfNeeded(ps);
         ensureDesktopPlayerControls(ps);
       }
+      ensureSearchInputClearButton();
     };
 
     const observer = new MutationObserver((mutations) => {
@@ -1563,7 +1860,7 @@ export function initWebInputAdapter() {
       for (const m of mutations) {
         if (m.addedNodes.length > 0) {
           checkPending = true;
-          requestAnimationFrame(checkPlayerControls);
+          requestAnimationFrame(checkDomElements);
           break;
         }
       }
