@@ -19606,34 +19606,6 @@ export const PlayerScreen = {
     rail.scrollTop = Math.max(0, Number(state.scrollTop || 0));
   },
 
-  scrollSubtitleOptionsRail(deltaY) {
-    const dialog = this.uiRefs?.subtitleDialog;
-    const rail = dialog?.querySelector?.(".player-subtitle-options-rail");
-    if (!this.subtitleDialogVisible || !(rail instanceof HTMLElement)) {
-      return false;
-    }
-    const state = this.subtitleOptionVirtualState;
-    if (state?.model && state?.window) {
-      const viewportHeight = Number(rail.clientHeight || 0) || 720;
-      const maxScroll = Math.max(0, Number(state.model.totalExtent || 0) - viewportHeight);
-      const nextScrollTop = Math.max(
-        0,
-        Math.min(maxScroll, Number(state.scrollTop || 0) + Number(deltaY || 0))
-      );
-      state.scrollTop = nextScrollTop;
-      state.window = getSubtitleVirtualWindow(state.model, {
-        scrollTop: nextScrollTop,
-        viewportHeight,
-        overscanPx: SUBTITLE_VIRTUALIZATION_OVERSCAN_PX,
-        minWindow: SUBTITLE_VIRTUALIZATION_MIN_WINDOW
-      });
-      this.renderSubtitleOptionsRailInPlace({ scheduleMeasurement: false, syncFocus: false });
-      return true;
-    }
-    rail.scrollTop += Number(deltaY || 0);
-    return true;
-  },
-
   scheduleSubtitleOptionVirtualMeasurement() {
     if (this.subtitleOptionVirtualMeasureTimer) {
       clearTimeout(this.subtitleOptionVirtualMeasureTimer);
@@ -21577,7 +21549,7 @@ export const PlayerScreen = {
     return false;
   },
 
-  showAspectToast(label, durationMs = 1400) {
+  showAspectToast(label) {
     const toast = this.uiRefs?.aspectToast;
     if (!toast) {
       return;
@@ -21592,7 +21564,7 @@ export const PlayerScreen = {
 
     this.aspectToastTimer = setTimeout(() => {
       toast.classList.add("hidden");
-    }, durationMs);
+    }, 1400);
   },
 
   getAspectModeDefinition(mode = this.aspectModes?.[this.aspectModeIndex]) {

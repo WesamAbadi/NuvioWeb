@@ -38,6 +38,11 @@ body.platform-browser.player-cursor-hidden * {
 .platform-browser .player-post-play-synopsis,
 .platform-browser [data-player-post-play-action],
 .platform-browser [data-player-post-play-modal],
+.platform-browser .web-player-btn,
+.platform-browser .web-player-volume-slider,
+.platform-browser .web-player-volume-group,
+.platform-browser .web-player-pip-btn,
+.platform-browser .web-player-fullscreen-btn,
 .platform-browser .player-control-btn,
 .platform-browser .player-control-button,
 .platform-browser .player-action-btn,
@@ -297,4 +302,142 @@ body.platform-browser.player-cursor-hidden * {
 .platform-browser .nuvio-dialog-body {
   scroll-behavior: smooth;
   overscroll-behavior: contain;
+}
+
+/* Desktop Browser Player Controls: Volume, PiP & Fullscreen */
+.platform-browser .web-player-volume-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 10px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  margin-left: 8px;
+  pointer-events: auto !important;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+  user-select: none;
+}
+
+.platform-browser .web-player-volume-group:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.platform-browser .web-player-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: #f4f8fd;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.platform-browser .web-player-btn:hover {
+  background: rgba(255, 255, 255, 0.2) !important;
+  transform: scale(1.08);
+}
+
+.platform-browser .web-player-btn:active {
+  transform: scale(0.94);
+}
+
+.platform-browser .web-player-volume-slider-wrapper {
+  width: 72px;
+  display: flex;
+  align-items: center;
+}
+
+.platform-browser .web-player-volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.3);
+  outline: none;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  transition: height 0.12s ease;
+}
+
+.platform-browser .web-player-volume-slider:hover {
+  height: 6px;
+}
+
+.platform-browser .web-player-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
+  transition: transform 0.1s ease;
+}
+
+.platform-browser .web-player-volume-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+}
+
+.platform-browser .web-player-volume-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
+}
+
+.platform-browser .web-player-desktop-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  pointer-events: auto !important;
+}
+
+.platform-browser .web-player-volume-toast {
+  position: fixed;
+  top: 36px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-10px);
+  background: rgba(18, 20, 26, 0.92);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 8px 20px;
+  border-radius: 24px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  pointer-events: none;
+  z-index: 999999;
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.platform-browser .web-player-volume-toast.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
