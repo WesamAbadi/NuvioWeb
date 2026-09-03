@@ -20,12 +20,24 @@ body.platform-browser.player-cursor-hidden * {
 .platform-browser button,
 .platform-browser a,
 .platform-browser [data-action],
+.platform-browser [data-action-id],
+.platform-browser [data-mode],
+.platform-browser [data-layout],
 .platform-browser [tabindex],
 .platform-browser .home-content-card,
 .platform-browser .meta-cast-card,
 .platform-browser .catalog-card,
 .platform-browser .stream-card,
 .platform-browser .episode-card,
+.platform-browser .tmdb-entity-card,
+.platform-browser .experience-mode-card,
+.platform-browser .catalog-order-focusable,
+.platform-browser .addons-focusable,
+.platform-browser .license-row,
+.platform-browser .player-post-play-action,
+.platform-browser .player-post-play-synopsis,
+.platform-browser [data-player-post-play-action],
+.platform-browser [data-player-post-play-modal],
 .platform-browser .player-control-btn,
 .platform-browser .player-control-button,
 .platform-browser .player-action-btn,
@@ -64,8 +76,14 @@ body.platform-browser.player-cursor-hidden * {
 .platform-browser .focusable:hover:not(.disabled):not(:disabled),
 .platform-browser button:hover:not(:disabled),
 .platform-browser [data-action]:hover,
+.platform-browser [data-action-id]:hover,
 .platform-browser .sidebar-item:hover,
-.platform-browser .settings-item:hover {
+.platform-browser .settings-item:hover,
+.platform-browser .player-post-play-action:hover:not(:disabled),
+.platform-browser .player-post-play-synopsis:hover,
+.platform-browser .catalog-order-focusable:hover:not(.is-disabled),
+.platform-browser .addons-focusable:hover:not(.is-disabled),
+.platform-browser .license-row:hover {
   background-color: rgba(255, 255, 255, 0.15) !important;
   transition: background-color 0.15s ease;
 }
@@ -73,7 +91,9 @@ body.platform-browser.player-cursor-hidden * {
 .platform-browser .home-content-card:hover,
 .platform-browser .catalog-card:hover,
 .platform-browser .stream-card:hover,
-.platform-browser .episode-card:hover {
+.platform-browser .episode-card:hover,
+.platform-browser .tmdb-entity-card:hover,
+.platform-browser .experience-mode-card:hover {
   outline: 2px solid rgba(255, 255, 255, 0.7) !important;
   outline-offset: 2px;
   z-index: 5;
@@ -206,7 +226,14 @@ body.platform-browser.player-cursor-hidden * {
 .platform-browser .player-dialog,
 .platform-browser .player-subtitle-dialog,
 .platform-browser .player-audio-dialog,
-.platform-browser .player-episode-panel {
+.platform-browser .player-episode-panel,
+.platform-browser .player-post-play-root,
+.platform-browser .player-post-play-content,
+.platform-browser .player-post-play-actions,
+.platform-browser .player-post-play-action,
+.platform-browser .player-post-play-synopsis,
+.platform-browser .player-post-play-synopsis-overlay,
+.platform-browser .player-post-play-manual-dialog {
   pointer-events: auto !important;
 }
 
@@ -233,7 +260,8 @@ body.platform-browser.player-cursor-hidden * {
 }
 
 .platform-browser .nuvio-dialog-backdrop,
-.platform-browser .profile-pin-overlay {
+.platform-browser .profile-pin-overlay,
+.platform-browser [data-player-post-play-modal] {
   pointer-events: auto !important;
 }
 

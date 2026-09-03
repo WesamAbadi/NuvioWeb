@@ -236,7 +236,9 @@ function unmuteAndUnlockAudio() {
 function hasActiveModal() {
   return Boolean(
     document.body?.classList?.contains("nuvio-modal-open") ||
-    document.querySelector(".nuvio-dialog-backdrop, .profile-pin-overlay")
+    document.querySelector(
+      ".nuvio-dialog-backdrop, .profile-pin-overlay, .player-post-play-synopsis-overlay, [data-player-post-play-modal]"
+    )
   );
 }
 
@@ -275,7 +277,8 @@ function findFocusableTarget(node) {
 
   if (hasActiveModal()) {
     const modalContainer = node.closest(
-      ".nuvio-dialog-backdrop, .profile-pin-overlay, .nuvio-dialog-frame"
+      ".nuvio-dialog-backdrop, .profile-pin-overlay, .nuvio-dialog-frame, " +
+        ".player-post-play-synopsis-overlay, [data-player-post-play-modal], .player-post-play-manual-dialog"
     );
     if (!modalContainer) {
       return null;
@@ -283,12 +286,14 @@ function findFocusableTarget(node) {
   }
 
   const focusable = node.closest(
-    ".focusable, button, a, input, textarea, select, [data-action], [tabindex], " +
+    ".focusable, button, a, input, textarea, select, [data-action], [data-action-id], [data-mode], [data-layout], [tabindex], " +
       ".home-content-card, .meta-cast-card, .catalog-card, .stream-card, " +
-      ".episode-card, .player-control-btn, .player-control-button, .player-action-btn, " +
+      ".episode-card, .tmdb-entity-card, .experience-mode-card, .catalog-order-focusable, .addons-focusable, .license-row, " +
+      ".player-control-btn, .player-control-button, .player-action-btn, " +
       ".player-progress-shell, .player-header-back-btn, .player-back-btn, " +
       ".player-dialog-item, .player-sources-item, [data-sources-zone], [data-subtitle-rail], " +
       "[data-audio-column], [data-speed-index], [data-episode-stream-index], " +
+      "[data-player-post-play-action], .player-post-play-action, .player-post-play-synopsis, [data-player-post-play-modal], " +
       '.sidebar-item, .settings-item, .profile-card, .nuvio-dialog-btn, .tab-item, [role="button"]'
   );
 
@@ -487,6 +492,30 @@ function handlePointerClick(event) {
 
   const playerScreen = getActivePlayerScreen();
   if (playerScreen) {
+    if (playerScreen.isPostPlayVisible?.()) {
+      const postPlayAction = rawTarget.closest(
+        "[data-player-post-play-action], [data-player-post-play-modal]"
+      );
+      if (postPlayAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof playerScreen.handlePostPlayPointer === "function") {
+          playerScreen.handlePostPlayPointer(postPlayAction, event);
+        }
+        return;
+      }
+      if (
+        rawTarget.closest(
+          ".player-post-play-root, .player-post-play-content, .player-post-play-backdrop, " +
+            ".player-post-play-scrim, .player-post-play-synopsis-overlay, .player-post-play-manual-dialog"
+        )
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    }
+
     const progressShell = rawTarget.closest(".player-progress-shell");
     if (progressShell) {
       event.preventDefault();
@@ -502,6 +531,7 @@ function handlePointerClick(event) {
           ".player-dialog, .player-subtitle-dialog, .player-audio-dialog, .player-sources-panel, .player-sources-drawer, " +
           ".player-episode-panel, .player-dialog-item, .player-sources-item, [data-sources-zone], [data-subtitle-rail], " +
           "[data-audio-column], [data-speed-index], [data-episode-action], [data-episode-stream-index], " +
+          "[data-player-post-play-action], .player-post-play-action, .player-post-play-synopsis, [data-player-post-play-modal], " +
           ".focusable, button, [data-player-pointer-action], .player-control-bar"
       )
     );
@@ -775,11 +805,11 @@ function handleWheel(event) {
   const target = event.target;
   if (!(target instanceof Element)) return;
 
+  // 1. Horizontal card carousels
   const row = target.closest(
     ".home-row-cards, .catalog-cards-row, .collection-items-row, " +
       ".meta-cast-row, [data-scroll-row], .horizontal-scroll"
   );
-
   if (row) {
     event.preventDefault();
     const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
@@ -787,15 +817,68 @@ function handleWheel(event) {
     return;
   }
 
-  const container = target.closest(
-    ".screen, .home-main, .meta-details-content, .settings-container, " +
-      ".catalog-grid, .nuvio-dialog-body, .sidebar-container"
-  );
-
-  if (container) {
-    if (container.scrollHeight > container.clientHeight) {
-      container.scrollTop += event.deltaY;
+  // 2. Stream route virtualized list
+  const streamList = target.closest(".stream-route-list");
+  if (streamList) {
+    event.preventDefault();
+    const currentScreen = Router.getCurrentScreen();
+    if (typeof currentScreen?.setListScrollTop === "function") {
+      const deltaMode = Number(event.deltaMode || 0);
+      const multiplier = deltaMode === 1 ? 40 : deltaMode === 2 ? streamList.clientHeight : 1;
+      const deltaY = Number(event.deltaY || 0) * multiplier;
+      currentScreen.setListScrollTop(
+        streamList,
+        currentScreen.getListScrollTop(streamList) + deltaY
+      );
+      currentScreen.requestStreamVirtualSync?.();
+      currentScreen.requestStreamBadgeHydration?.();
+    } else {
+      streamList.scrollTop += event.deltaY;
     }
+    return;
+  }
+
+  // 3. Subtitle options rail (virtualized or native)
+  const subtitleRail = target.closest(".player-subtitle-options-rail, .player-subtitle-rail");
+  if (subtitleRail) {
+    event.preventDefault();
+    const playerScreen = getActivePlayerScreen();
+    if (typeof playerScreen?.scrollSubtitleOptionsRail === "function") {
+      playerScreen.scrollSubtitleOptionsRail(event.deltaY);
+    } else {
+      subtitleRail.scrollTop += event.deltaY;
+    }
+    return;
+  }
+
+  // 4. Specific scrollable panels and containers
+  const scrollable = target.closest(
+    ".home-main, .meta-details-content, .settings-container, .catalog-grid, " +
+      ".catalog-order-main, .licenses-list, .experience-mode-screen, .player-sources-list, " +
+      ".player-sources-drawer, .player-dialog, .player-audio-dialog, .player-subtitle-dialog, " +
+      ".nuvio-dialog-body, .sidebar-container, [data-scroll-container]"
+  );
+  if (scrollable && scrollable.scrollHeight > scrollable.clientHeight) {
+    scrollable.scrollTop += event.deltaY;
+    return;
+  }
+
+  // 5. General scrollable element fallback (excluding fixed screen containers)
+  let el = target instanceof HTMLElement ? target : target.parentElement;
+  while (
+    el &&
+    el !== document.body &&
+    el !== document.documentElement &&
+    !el.classList.contains("screen")
+  ) {
+    if (
+      el.scrollHeight > el.clientHeight &&
+      getComputedStyle(el).overflowY.match(/(auto|scroll)/)
+    ) {
+      el.scrollTop += event.deltaY;
+      return;
+    }
+    el = el.parentElement;
   }
 }
 

@@ -3246,7 +3246,7 @@ export const StreamScreen = {
       },
       { passive: true }
     );
-    if (Environment.isWebOS()) {
+    if (Environment.isWebOS() || Environment.isBrowser()) {
       list.addEventListener(
         "wheel",
         (event) => {
