@@ -40,7 +40,7 @@ body.platform-browser.player-cursor-hidden * {
 .platform-browser [data-player-post-play-modal],
 .platform-browser .web-player-btn,
 .platform-browser .web-player-volume-slider,
-.platform-browser .web-player-volume-group,
+.platform-browser .web-player-volume-cluster,
 .platform-browser .web-player-pip-btn,
 .platform-browser .web-player-fullscreen-btn,
 .platform-browser .player-control-btn,

@@ -474,29 +474,6 @@ function bindVolumeGroupEvents(volumeCluster) {
         );
       }
     });
-
-    slider.addEventListener(
-      "wheel",
-      (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const video = document.querySelector("#videoPlayer, video");
-        if (video) {
-          const delta = e.deltaY < 0 ? 0.05 : -0.05;
-          const newVol = Math.max(0, Math.min(1, Math.round((video.volume + delta) * 100) / 100));
-          video.volume = newVol;
-          video.muted = newVol === 0;
-          saveWebVolumeState(newVol, video.muted);
-          syncVolumeUi(volumeCluster);
-          const percent = Math.round(newVol * 100);
-          showVolumeToast(
-            newVol === 0 ? "Muted" : `${percent}%`,
-            newVol === 0 ? "mute" : percent < 50 ? "low" : "high"
-          );
-        }
-      },
-      { passive: false }
-    );
   }
 }
 
@@ -1692,42 +1669,7 @@ function handleWheel(event) {
     return;
   }
 
-  // 4. Adjust volume via wheel over video player surface (unless interacting with dialogs or sliders)
-  const playerScreen = getActivePlayerScreen();
-  if (playerScreen && !playerScreen.isDialogOpen?.() && !playerScreen.isPostPlayVisible?.()) {
-    const isPlayerSurface = Boolean(
-      target.closest(
-        "#player, .player-screen, #videoPlayer, video, .player-video-container, .player-controls-row, .web-player-volume-group"
-      )
-    );
-    const isExcluded = Boolean(
-      target.closest(
-        ".player-progress-shell, .player-subtitle-options-rail, .player-subtitle-rail, " +
-          ".player-dialog, .player-subtitle-dialog, .player-audio-dialog, .player-sources-panel, .player-episode-panel"
-      )
-    );
-
-    if (isPlayerSurface && !isExcluded) {
-      event.preventDefault();
-      const video = document.querySelector("#videoPlayer, video");
-      if (video) {
-        const delta = event.deltaY < 0 ? 0.05 : -0.05;
-        const newVol = Math.max(0, Math.min(1, Math.round((video.volume + delta) * 100) / 100));
-        video.volume = newVol;
-        video.muted = newVol === 0;
-        saveWebVolumeState(newVol, video.muted);
-        syncVolumeUi();
-        const percent = Math.round(newVol * 100);
-        showVolumeToast(
-          newVol === 0 ? "Muted" : `${percent}%`,
-          newVol === 0 ? "mute" : percent < 50 ? "low" : "high"
-        );
-      }
-      return;
-    }
-  }
-
-  // 5. Specific scrollable panels and containers
+  // 4. Specific scrollable panels and containers
   const scrollable = target.closest(
     ".home-main, .meta-details-content, .settings-container, .catalog-grid, " +
       ".catalog-order-main, .licenses-list, .experience-mode-screen, .player-sources-list, " +
