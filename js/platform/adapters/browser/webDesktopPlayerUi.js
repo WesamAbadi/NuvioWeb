@@ -3,16 +3,16 @@ import { PlayerController } from "../../../core/player/playerController.js";
 
 export const DESKTOP_ICONS = {
   volumeHigh:
-    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77zm-2.5-1.23L6.5 7H3c-.55 0-1 .45-1 1v8c0 .55.45 1 1 1h3.5l5 5c.67.67 1.5.2 1.5-.75V2.75c0-.95-.83-1.42-1.5-.75zm5 10c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>',
+    '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12.5 4.3c0-.86-.98-1.34-1.66-.78L6.8 7.5H3.5C2.67 7.5 2 8.17 2 9v6c0 .83.67 1.5 1.5 1.5h3.3l4.04 3.98c.68.56 1.66.08 1.66-.78V4.3z" fill="currentColor"/><path d="M15.5 8.5c1.33 2.13 1.33 4.87 0 7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18.5 5.5c2.8 4 2.8 9 0 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   volumeLow:
-    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M11.5 2L6.5 7H3c-.55 0-1 .45-1 1v8c0 .55.45 1 1 1h3.5l5 5c.67.67 1.5.2 1.5-.75V2.75c0-.95-.83-1.42-1.5-.75zm5 10c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>',
+    '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12.5 4.3c0-.86-.98-1.34-1.66-.78L6.8 7.5H3.5C2.67 7.5 2 8.17 2 9v6c0 .83.67 1.5 1.5 1.5h3.3l4.04 3.98c.68.56 1.66.08 1.66-.78V4.3z" fill="currentColor"/><path d="M16 9c1.2 1.8 1.2 4.2 0 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   volumeMute:
-    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>',
-  pip: '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z"/></svg>',
+    '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12.5 4.3c0-.86-.98-1.34-1.66-.78L6.8 7.5H3.5C2.67 7.5 2 8.17 2 9v6c0 .83.67 1.5 1.5 1.5h3.3l4.04 3.98c.68.56 1.66.08 1.66-.78V4.3z" fill="currentColor"/><path d="M16 9.5l5 5m0-5l-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  pip: '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="4" width="20" height="16" rx="3" stroke="currentColor" stroke-width="2"/><rect x="12" y="11" width="7.5" height="6.5" rx="1.5" fill="currentColor"/></svg>',
   fullscreenEnter:
-    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>',
+    '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   fullscreenExit:
-    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>'
+    '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 9h3a2 2 0 0 0 2-2V3m13 6h-3a2 2 0 0 1-2-2V3M3 15h3a2 2 0 0 1 2 2v4m13-6h-3a2 2 0 0 0-2 2v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 };
 
 const WEB_VOLUME_KEY = "nuvio_web_volume";
