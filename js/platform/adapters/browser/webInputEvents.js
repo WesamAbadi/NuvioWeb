@@ -117,7 +117,11 @@ export function triggerFallbackActivation(target, currentScreen, event) {
 
   target.dispatchEvent(enterEvent);
 
-  if (typeof currentScreen?.onKeyDown === "function") {
+  if (
+    !enterEvent.defaultPrevented &&
+    !target.isConnected &&
+    typeof currentScreen?.onKeyDown === "function"
+  ) {
     const normalized = Platform.normalizeKey(enterEvent);
     normalized.target = target;
     try {
@@ -137,7 +141,11 @@ export function triggerFallbackActivation(target, currentScreen, event) {
   });
   target.dispatchEvent(enterKeyUp);
 
-  if (typeof currentScreen?.onKeyUp === "function") {
+  if (
+    !enterKeyUp.defaultPrevented &&
+    !target.isConnected &&
+    typeof currentScreen?.onKeyUp === "function"
+  ) {
     const normalizedUp = Platform.normalizeKey(enterKeyUp);
     normalizedUp.target = target;
     try {
@@ -433,7 +441,31 @@ export function handlePointerClick(event) {
     return;
   }
 
-  // 2. Allow onPointerActivate if provided by the screen
+  // 2. Settings & Trakt screens manage their own click events and section switching natively via handleClickEvent
+  const isSettingsOrTrakt =
+    Router.getCurrent?.() === "settings" ||
+    Router.getCurrent?.() === "trakt" ||
+    currentScreen?.name === "settings" ||
+    currentScreen?.name === "trakt" ||
+    Boolean(
+      target.closest(
+        "#settings, .settings-shell, .settings-container, .settings-screen, #trakt, .trakt-screen"
+      )
+    );
+  if (isSettingsOrTrakt) {
+    return;
+  }
+
+  // 3. Sidebar items and dialog buttons manage their clicks natively
+  if (
+    target.closest(
+      ".sidebar-item, .modern-sidebar-item, .modern-sidebar-pill, [data-settings-root-sidebar], [data-root-sidebar], .nuvio-dialog-btn"
+    )
+  ) {
+    return;
+  }
+
+  // 4. Allow onPointerActivate if provided by the screen
   if (typeof currentScreen?.onPointerActivate === "function") {
     Promise.resolve(currentScreen.onPointerActivate(target, event))
       .then((handled) => {
@@ -447,7 +479,7 @@ export function handlePointerClick(event) {
     return;
   }
 
-  // 3. Fallback activation (Enter keydown + keyup on focused node)
+  // 5. Fallback activation (Enter keydown + keyup on focused node)
   triggerFallbackActivation(target, currentScreen, event);
 }
 
