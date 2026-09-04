@@ -466,10 +466,10 @@ body.platform-browser.player-cursor-hidden * {
 .platform-browser .web-player-volume-cluster:hover .web-player-volume-slider-wrapper,
 .platform-browser .web-player-volume-cluster.is-active .web-player-volume-slider-wrapper,
 .platform-browser .web-player-volume-slider-wrapper:focus-within {
-  width: 76px;
-  max-width: 76px;
+  width: 96px;
+  max-width: 96px;
   opacity: 1;
-  margin-left: 2px;
+  margin-left: 4px;
   margin-right: 14px;
   pointer-events: auto;
 }
