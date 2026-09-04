@@ -422,9 +422,9 @@ export function resetPlayerCursorTimer(playerScreen) {
   }
 
   playerCursorTimer = setTimeout(() => {
-    if (getActivePlayerScreen() && !isScrubbing) {
+    const activePs = getActivePlayerScreen();
+    if (activePs && !isScrubbing && !activePs.isDialogOpen?.()) {
       hidePlayerCursor();
-      const activePs = getActivePlayerScreen();
       activePs?.setControlsVisible?.(false, { focus: false });
     }
   }, 2500);

@@ -255,25 +255,60 @@ body.platform-browser.player-cursor-hidden * {
   white-space: nowrap;
 }
 
-/* Subtitle, audio, and source side panel dialog item hover */
-.platform-browser .player-dialog-item:hover,
-.platform-browser .player-subtitle-item:hover,
-.platform-browser .player-audio-item:hover,
-.platform-browser .player-sources-item:hover,
-.platform-browser [data-sources-zone]:hover,
-.platform-browser [data-subtitle-rail]:hover,
-.platform-browser [data-audio-column]:hover,
-.platform-browser [data-speed-index]:hover {
-  background: rgba(255, 255, 255, 0.15) !important;
+/* Subtitle, audio, speed, and sources dialog item hover in desktop browser */
+.platform-browser .player-dialog-item {
+  cursor: pointer !important;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease !important;
+}
+
+.platform-browser .player-dialog-item:hover:not(.disabled):not(.selected),
+.platform-browser [data-subtitle-rail]:hover:not(.disabled):not(.selected),
+.platform-browser [data-audio-column]:hover:not(.disabled):not(.selected),
+.platform-browser [data-speed-index]:hover:not(.selected) {
+  background: rgba(255, 255, 255, 0.16) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
   color: #ffffff !important;
   cursor: pointer !important;
 }
 
-.platform-browser .player-sources-panel,
-.platform-browser .player-sources-drawer,
+.platform-browser .player-dialog-item.selected:hover,
+.platform-browser [data-subtitle-rail].selected:hover,
+.platform-browser [data-audio-column].selected:hover,
+.platform-browser [data-speed-index].selected:hover {
+  border-color: rgba(255, 255, 255, 0.6) !important;
+  filter: brightness(1.12) !important;
+  cursor: pointer !important;
+}
+
+.platform-browser .player-dialog-step:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.28) !important;
+  color: #ffffff !important;
+  cursor: pointer !important;
+}
+
+/* Hidden modals must never block pointer events */
+.platform-browser .player-modal.hidden,
+.platform-browser .player-modal.hidden *,
+.platform-browser .player-modal-backdrop.hidden,
+.platform-browser .player-sources-panel.hidden,
+.platform-browser .player-sources-drawer.hidden {
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+
+/* Visible modals and panels must allow pointer interaction */
+.platform-browser .player-modal:not(.hidden),
+.platform-browser .player-subtitle-modal:not(.hidden),
+.platform-browser .player-audio-modal:not(.hidden),
+.platform-browser .player-speed-modal:not(.hidden),
+.platform-browser #playerSubtitleDialog:not(.hidden),
+.platform-browser #playerAudioDialog:not(.hidden),
+.platform-browser #playerSpeedDialog:not(.hidden),
+.platform-browser .player-sources-panel:not(.hidden),
+.platform-browser .player-sources-drawer:not(.hidden),
 .platform-browser .player-dialog,
-.platform-browser .player-subtitle-dialog,
-.platform-browser .player-audio-dialog,
 .platform-browser .player-episode-panel,
 .platform-browser .player-post-play-root,
 .platform-browser .player-post-play-content,
@@ -283,6 +318,37 @@ body.platform-browser.player-cursor-hidden * {
 .platform-browser .player-post-play-synopsis-overlay,
 .platform-browser .player-post-play-manual-dialog {
   pointer-events: auto !important;
+  visibility: visible !important;
+}
+
+.platform-browser #playerSubtitleDialog:not(.hidden),
+.platform-browser #playerAudioDialog:not(.hidden),
+.platform-browser #playerSpeedDialog:not(.hidden),
+.platform-browser .player-modal:not(.hidden) {
+  z-index: 100 !important;
+}
+
+.platform-browser #playerSubtitleDialog:not(.hidden) *,
+.platform-browser #playerAudioDialog:not(.hidden) *,
+.platform-browser #playerSpeedDialog:not(.hidden) *,
+.platform-browser .player-modal:not(.hidden) * {
+  pointer-events: auto !important;
+}
+
+.platform-browser .player-subtitle-virtual-spacer {
+  pointer-events: none !important;
+}
+
+.platform-browser .player-modal-backdrop:not(.hidden) {
+  z-index: 90 !important;
+  pointer-events: auto !important;
+  visibility: visible !important;
+  cursor: default !important;
+}
+
+.platform-browser .player-controls-overlay.modal-blocked,
+.platform-browser .player-controls-overlay.modal-blocked * {
+  pointer-events: none !important;
 }
 
 /* Compact minimal sizing for player aspect toast on Web Desktop Browsers */
@@ -303,7 +369,7 @@ body.platform-browser.player-cursor-hidden * {
 }
 
 /* Modal backdrop pointer isolation */
-.platform-browser.nuvio-modal-open #app > .screen:not(.nuvio-modal-active) {
+.platform-browser.nuvio-modal-open #app > .screen:not(#player):not(.nuvio-modal-active) {
   pointer-events: none !important;
 }
 

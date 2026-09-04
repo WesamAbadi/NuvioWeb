@@ -383,10 +383,154 @@ export function handlePointerClick(event) {
       return;
     }
 
+    if (typeof playerScreen.isDialogOpen === "function" && playerScreen.isDialogOpen()) {
+      const dialogContainer = rawTarget.closest(
+        ".player-modal, #playerSubtitleDialog, #playerAudioDialog, #playerSpeedDialog, " +
+          ".player-sources-panel, .player-sources-drawer, .player-episode-panel, #episodeSidePanel, " +
+          ".player-dialog"
+      );
+
+      if (!dialogContainer) {
+        // User clicked outside the open dialog (e.g. on backdrop, video, or outside control bar)
+        // Close dialog without toggling playback or dispatching enter
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        playerScreen.closeSubtitleDialog?.();
+        playerScreen.closeAudioDialog?.();
+        playerScreen.closeSpeedDialog?.();
+        playerScreen.hideSourcesPanel?.();
+        playerScreen.hideEpisodePanel?.();
+        return;
+      }
+
+      // User clicked INSIDE the open dialog
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+
+      const dialogItem = rawTarget.closest(
+        ".player-dialog-item, .player-dialog-step, .player-sources-item, " +
+          "[data-subtitle-rail], [data-audio-column], [data-speed-index], [data-sources-zone], " +
+          "[data-episode-action], [data-episode-stream-index], [data-episode-season-index], [data-episode-index], " +
+          ".focusable, button"
+      );
+
+      if (dialogItem) {
+        // Handle Subtitle items directly
+        const subtitleRailNode = dialogItem.dataset?.subtitleRail
+          ? dialogItem
+          : dialogItem.closest("[data-subtitle-rail]");
+        if (subtitleRailNode) {
+          const rail = subtitleRailNode.dataset.subtitleRail;
+          const index = Number(subtitleRailNode.dataset.subtitleIndex || 0);
+
+          if (
+            dialogItem.dataset?.subtitleStyleAction ||
+            dialogItem.closest("[data-subtitle-style-action]")
+          ) {
+            playerScreen.onPointerActivate?.(dialogItem, event);
+          } else if (rail === "language") {
+            const languages = playerScreen.getSubtitleLanguageRailItems?.() || [];
+            const lang = languages[index];
+            if (lang) {
+              playerScreen.subtitleFocusedRail = "language";
+              playerScreen.subtitleLanguageRailIndex = index;
+              playerScreen.subtitleFocusedLanguageKey = lang.key;
+              if (lang.key === "off" || lang.id === "subtitle-off") {
+                const offEntry = playerScreen
+                  .getSubtitleEntries?.("builtIn")
+                  ?.find?.((e) => e.id === "subtitle-off") || {
+                  trackIndex: -1
+                };
+                playerScreen.applySubtitleEntry?.(offEntry);
+              } else {
+                const selected = playerScreen.selectFirstSubtitleOptionForLanguage?.(lang.key, {
+                  focusOptions: true
+                });
+                if (!selected) {
+                  const nextOptions = playerScreen.getSubtitleOptionsForLanguage?.(lang.key) || [];
+                  if (nextOptions.length) {
+                    playerScreen.subtitleFocusedRail = "options";
+                    playerScreen.subtitleOptionRailIndex = 0;
+                  }
+                }
+              }
+              playerScreen.renderSubtitleDialog?.();
+            }
+          } else if (rail === "options") {
+            const selectedLang = playerScreen.getSelectedSubtitleLanguageKey?.();
+            const options = playerScreen.getSubtitleOptionsForLanguage?.(selectedLang) || [];
+            const option = options[index];
+            playerScreen.subtitleFocusedRail = "options";
+            playerScreen.subtitleOptionRailIndex = index;
+            if (option?.entry) {
+              playerScreen.applySubtitleEntry?.(option.entry);
+            }
+            playerScreen.renderSubtitleDialog?.();
+          } else if (rail === "style") {
+            playerScreen.subtitleFocusedRail = "style";
+            playerScreen.subtitleStyleRailIndex = index;
+            playerScreen.renderSubtitleDialog?.();
+          }
+          return;
+        }
+
+        // Handle Audio items directly
+        const audioColNode = dialogItem.dataset?.audioColumn
+          ? dialogItem
+          : dialogItem.closest("[data-audio-column]");
+        if (audioColNode) {
+          const col = audioColNode.dataset.audioColumn || "tracks";
+          const index = Number(audioColNode.dataset.audioIndex || 0);
+          playerScreen.audioFocusedColumn = col;
+          if (col === "tracks") {
+            playerScreen.audioDialogIndex = index;
+            playerScreen.applyAudioTrack?.(index, { rememberSelection: true });
+          } else {
+            playerScreen.audioMixFocusIndex = index;
+            const audioStepNode =
+              dialogItem.dataset?.audioStep !== undefined
+                ? dialogItem
+                : dialogItem.closest("[data-audio-step]");
+            if (audioStepNode) {
+              playerScreen.activateAudioControl?.(Number(audioStepNode.dataset.audioStep || 1));
+            } else {
+              playerScreen.activateAudioControl?.(index === 0 ? 1 : 0);
+            }
+          }
+          playerScreen.renderAudioDialog?.();
+          return;
+        }
+
+        // Handle Speed items directly
+        const speedNode =
+          dialogItem.dataset?.speedIndex !== undefined
+            ? dialogItem
+            : dialogItem.closest("[data-speed-index]");
+        if (speedNode) {
+          const index = Number(speedNode.dataset.speedIndex || 0);
+          const speedOptions = playerScreen.getPlaybackSpeedOptions?.() || [];
+          playerScreen.speedDialogIndex = index;
+          playerScreen.applyPlaybackSpeed?.(speedOptions[index] || 1);
+          playerScreen.renderSpeedDialog?.();
+          return;
+        }
+
+        // Other dialog elements (sources panel, episode panel, etc.)
+        playerScreen.syncPointerFocus?.(dialogItem);
+        playerScreen.onPointerActivate?.(dialogItem, event);
+      }
+      return;
+    }
+
     const isControlClick = Boolean(
       rawTarget.closest(
         ".player-control-btn, .player-control-button, .player-action-btn, .player-progress-shell, " +
-          ".player-dialog, .player-subtitle-dialog, .player-audio-dialog, .player-sources-panel, .player-sources-drawer, " +
+          ".player-modal, .player-subtitle-modal, .player-audio-modal, .player-speed-modal, " +
+          "#playerSubtitleDialog, #playerAudioDialog, #playerSpeedDialog, " +
+          ".player-subtitle-overlay-grid, .player-subtitle-rail, .player-dialog-step, " +
+          ".player-audio-track-list, .player-dialog, .player-sources-panel, .player-sources-drawer, " +
           ".player-episode-panel, .player-dialog-item, .player-sources-item, [data-sources-zone], [data-subtitle-rail], " +
           "[data-audio-column], [data-speed-index], [data-episode-action], [data-episode-stream-index], " +
           "[data-player-post-play-action], .player-post-play-action, .player-post-play-synopsis, [data-player-post-play-modal], " +
@@ -469,18 +613,22 @@ export function handlePointerClick(event) {
   if (typeof currentScreen?.onPointerActivate === "function") {
     Promise.resolve(currentScreen.onPointerActivate(target, event))
       .then((handled) => {
-        if (!handled) {
+        if (!handled && !currentScreen.isDialogOpen?.()) {
           triggerFallbackActivation(target, currentScreen, event);
         }
       })
       .catch(() => {
-        triggerFallbackActivation(target, currentScreen, event);
+        if (!currentScreen.isDialogOpen?.()) {
+          triggerFallbackActivation(target, currentScreen, event);
+        }
       });
     return;
   }
 
   // 5. Fallback activation (Enter keydown + keyup on focused node)
-  triggerFallbackActivation(target, currentScreen, event);
+  if (!currentScreen?.isDialogOpen?.()) {
+    triggerFallbackActivation(target, currentScreen, event);
+  }
 }
 
 export function handlePointerMove(event) {
@@ -856,7 +1004,8 @@ export function handleWheel(event) {
   const scrollable = target.closest(
     ".home-main, .meta-details-content, .settings-container, .catalog-grid, " +
       ".catalog-order-main, .licenses-list, .experience-mode-screen, .player-sources-list, " +
-      ".player-sources-drawer, .player-dialog, .player-audio-dialog, .player-subtitle-dialog, " +
+      ".player-sources-drawer, .player-dialog, .player-modal, .player-subtitle-modal, .player-audio-modal, " +
+      ".player-speed-modal, .player-subtitle-rail, .player-audio-track-list, " +
       ".nuvio-dialog-body, .sidebar-container, [data-scroll-container]"
   );
   if (scrollable && scrollable.scrollHeight > scrollable.clientHeight) {
